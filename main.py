@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import re
 from contextlib import contextmanager
 from datetime import date, datetime, time
 from pathlib import Path
@@ -49,6 +50,9 @@ def initialize_database() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 space TEXT NOT NULL,
                 responsible TEXT NOT NULL,
+                teacher_name TEXT NOT NULL DEFAULT '',
+                teacher_registry TEXT NOT NULL DEFAULT '',
+                teacher_email TEXT NOT NULL DEFAULT '',
                 group_name TEXT NOT NULL,
                 reservation_date TEXT NOT NULL,
                 start_time TEXT NOT NULL,
@@ -66,10 +70,32 @@ def initialize_database() -> None:
                 supports TEXT NOT NULL,
                 progress TEXT NOT NULL,
                 status TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                teacher_name TEXT NOT NULL DEFAULT '',
+                teacher_registry TEXT NOT NULL DEFAULT '',
+                teacher_email TEXT NOT NULL DEFAULT ''
             );
             """
         )
+        migrations = {
+            "reservations": {
+                "teacher_name": "TEXT NOT NULL DEFAULT ''",
+                "teacher_registry": "TEXT NOT NULL DEFAULT ''",
+                "teacher_email": "TEXT NOT NULL DEFAULT ''",
+            },
+            "aee_reports": {
+                "teacher_name": "TEXT NOT NULL DEFAULT ''",
+                "teacher_registry": "TEXT NOT NULL DEFAULT ''",
+                "teacher_email": "TEXT NOT NULL DEFAULT ''",
+            },
+        }
+        for table, columns in migrations.items():
+            existing_columns = {
+                row["name"] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            for column, definition in columns.items():
+                if column not in existing_columns:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def fetch_all(query: str, parameters: tuple = ()) -> list[sqlite3.Row]:
@@ -94,7 +120,9 @@ def add_announcement(title: str, category: str, audience: str, body: str) -> Non
 
 def add_reservation(
     space: str,
-    responsible: str,
+    teacher_name: str,
+    teacher_registry: str,
+    teacher_email: str,
     group_name: str,
     reservation_date: date,
     start_time: time,
@@ -120,12 +148,16 @@ def add_reservation(
         connection.execute(
             """
             INSERT INTO reservations
-                (space, responsible, group_name, reservation_date, start_time, end_time, purpose, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (space, responsible, teacher_name, teacher_registry, teacher_email,
+                 group_name, reservation_date, start_time, end_time, purpose, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 space,
-                responsible.strip(),
+                teacher_name,
+                teacher_name,
+                teacher_registry,
+                teacher_email,
                 group_name.strip(),
                 reservation_date.isoformat(),
                 start_text,
@@ -145,13 +177,15 @@ def add_aee_report(
     supports: str,
     progress: str,
     status: str,
+    teacher: dict[str, str],
 ) -> None:
     with connection_scope() as connection:
         connection.execute(
             """
             INSERT INTO aee_reports
-                (student_ref, grade, period, goals, supports, progress, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (student_ref, grade, period, goals, supports, progress, status, created_at,
+                 teacher_name, teacher_registry, teacher_email)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 student_ref.strip(),
@@ -162,6 +196,9 @@ def add_aee_report(
                 progress.strip(),
                 status,
                 datetime.now().isoformat(timespec="minutes"),
+                teacher["name"],
+                teacher["registry"],
+                teacher["email"],
             ),
         )
 
@@ -170,17 +207,17 @@ def delete_record(table: str, record_id: int) -> None:
     allowed_tables = {"announcements", "reservations", "aee_reports"}
     if table not in allowed_tables:
         raise ValueError("Tipo de registro inválido.")
-    with get_connection() as connection:
+    with connection_scope() as connection:
         connection.execute(f"DELETE FROM {table} WHERE id = ?", (record_id,))
 
 
-def render_reservation_tab(space: str) -> None:
+def render_reservation_tab(space: str, teacher: dict[str, str]) -> None:
     st.subheader(f"Agendamento de {space.lower()}")
     st.caption("Cadastre um horário e consulte os agendamentos existentes. Conflitos de horário são bloqueados.")
 
     with st.form(f"reservation_form_{space}", clear_on_submit=True):
         col1, col2 = st.columns(2)
-        responsible = col1.text_input("Responsável", placeholder="Nome do professor ou funcionário")
+        col1.text_input("Professor responsável", value=teacher["name"], disabled=True)
         group_name = col2.text_input("Turma ou grupo", placeholder="Ex.: 7º ano A")
         col3, col4, col5 = st.columns(3)
         reservation_date = col3.date_input("Data", min_value=date.today(), value=date.today())
@@ -196,7 +233,15 @@ def render_reservation_tab(space: str) -> None:
             st.error("O horário de término deve ser posterior ao horário de início.")
         else:
             success, message = add_reservation(
-                space, responsible, group_name, reservation_date, start_time, end_time, purpose
+                space,
+                teacher["name"],
+                teacher["registry"],
+                teacher["email"],
+                group_name,
+                reservation_date,
+                start_time,
+                end_time,
+                purpose,
             )
             if success:
                 st.success(message)
@@ -257,6 +302,9 @@ Referência do estudante: {row['student_ref']}
 Turma: {row['grade']}
 Período: {row['period']}
 Situação: {row['status']}
+Professor responsável: {row['teacher_name']}
+Matrícula do professor: {row['teacher_registry']}
+E-mail do professor: {row['teacher_email']}
 
 Objetivos de aprendizagem e participação:
 {row['goals']}
@@ -273,6 +321,42 @@ Registro criado em: {datetime.fromisoformat(row['created_at']).strftime('%d/%m/%
 
 st.set_page_config(page_title="Gestão Escolar", layout="wide")
 initialize_database()
+
+teacher = st.session_state.get("teacher_profile")
+if teacher is None:
+    st.title("Acesso de professores")
+    st.caption("Informe seus dados para abrir o sistema de gestão escolar.")
+    with st.form("teacher_login_form"):
+        teacher_name = st.text_input("Nome completo")
+        teacher_registry = st.text_input("Matrícula da Prefeitura")
+        teacher_email = st.text_input("E-mail", placeholder="professor@escola.edu.br")
+        login_submitted = st.form_submit_button("Acessar", type="primary")
+
+    if login_submitted:
+        normalized_email = teacher_email.strip().lower()
+        if not teacher_name.strip() or not teacher_registry.strip():
+            st.error("Preencha o nome e a matrícula da Prefeitura.")
+        elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized_email):
+            st.error("Informe um endereço de e-mail válido.")
+        else:
+            st.session_state["teacher_profile"] = {
+                "name": teacher_name.strip(),
+                "registry": teacher_registry.strip(),
+                "email": normalized_email,
+            }
+            st.rerun()
+    st.info("Este formulário identifica o professor, mas não confirma a titularidade da matrícula ou do e-mail.")
+    st.stop()
+
+teacher = st.session_state["teacher_profile"]
+with st.sidebar:
+    st.subheader("Professor conectado")
+    st.write(teacher["name"])
+    st.caption(f"Matrícula: {teacher['registry']}")
+    st.caption(teacher["email"])
+    if st.button("Sair"):
+        del st.session_state["teacher_profile"]
+        st.rerun()
 
 st.title("Gestão Escolar")
 st.caption("Organização de comunicados, espaços pedagógicos e acompanhamento da inclusão.")
@@ -316,10 +400,10 @@ with announcements_tab:
                     st.rerun()
 
 with court_tab:
-    render_reservation_tab("Quadra")
+    render_reservation_tab("Quadra", teacher)
 
 with computer_tab:
-    render_reservation_tab("Informática")
+    render_reservation_tab("Informática", teacher)
 
 with aee_tab:
     st.subheader("Relatório de Inclusão — Atendimento Educacional Especializado")
@@ -343,7 +427,7 @@ with aee_tab:
         if not all([student_ref.strip(), grade.strip(), period.strip(), goals.strip(), supports.strip(), progress.strip()]):
             st.error("Preencha todos os campos do relatório.")
         else:
-            add_aee_report(student_ref, grade, period, goals, supports, progress, status)
+            add_aee_report(student_ref, grade, period, goals, supports, progress, status, teacher)
             st.success("Relatório registrado.")
             st.rerun()
 
@@ -361,6 +445,10 @@ with aee_tab:
         with st.container(border=True):
             st.markdown(f"**Código:** {selected_report['student_ref']} &nbsp; · &nbsp; **Turma:** {selected_report['grade']}")
             st.caption(f"{selected_report['period']} · {selected_report['status']}")
+            st.caption(
+                f"Registrado por {selected_report['teacher_name']} "
+                f"({selected_report['teacher_registry']}) · {selected_report['teacher_email']}"
+            )
             st.markdown("**Objetivos**")
             st.write(selected_report["goals"])
             st.markdown("**Apoios e estratégias**")
