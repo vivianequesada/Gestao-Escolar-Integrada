@@ -12,13 +12,11 @@ from typing import Iterator
 
 import streamlit as st
 
-
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "gestao_escolar.db"
 APP_TITLE = "🏫 Portal Digital - CI Prefeito Ary Levy Pereira"
 
 # Matrículas iniciais. Professores adicionais são persistidos pelo painel administrativo.
-# Troque as matrículas de demonstração antes de usar o sistema com dados reais.
 MATRICULAS_PERMITIDAS: dict[str, dict[str, str]] = {
     "adm123": {"role": "Administrador", "name": "Administrador", "email": "", "teacher_type": "Regular"},
     "12345": {"role": "Professor", "name": "", "email": "", "teacher_type": "Regular"},
@@ -86,7 +84,6 @@ MESES_DO_ANO = (
     "Novembro",
     "Dezembro",
 )
-
 QUINZENAS = ("1ª Quinzena", "2ª Quinzena")
 TRIMESTRES = ("1º Trimestre", "2º Trimestre", "3º Trimestre")
 ALUNOS_DE_EXEMPLO = []
@@ -139,7 +136,6 @@ try {
 }
 """
 
-
 @contextmanager
 def connection_scope() -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(DB_PATH)
@@ -153,7 +149,6 @@ def connection_scope() -> Iterator[sqlite3.Connection]:
         raise
     finally:
         connection.close()
-
 
 def initialize_database() -> None:
     with connection_scope() as connection:
@@ -181,7 +176,6 @@ def initialize_database() -> None:
                 purpose TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
-
             CREATE TABLE IF NOT EXISTS aee_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_ref TEXT NOT NULL,
@@ -196,12 +190,10 @@ def initialize_database() -> None:
                 teacher_registry TEXT NOT NULL DEFAULT '',
                 teacher_email TEXT NOT NULL DEFAULT ''
             );
-
             CREATE TABLE IF NOT EXISTS classrooms (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE
             );
-
             CREATE TABLE IF NOT EXISTS students (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 code TEXT NOT NULL UNIQUE,
@@ -215,7 +207,6 @@ def initialize_database() -> None:
                 active INTEGER NOT NULL DEFAULT 1,
                 faltas_consecutivas INTEGER NOT NULL DEFAULT 0
             );
-
             CREATE TABLE IF NOT EXISTS authorized_users (
                 registry TEXT PRIMARY KEY,
                 role TEXT NOT NULL CHECK(role IN ('Administrador', 'Professor', 'Monitor')),
@@ -226,7 +217,6 @@ def initialize_database() -> None:
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             );
-
             CREATE TABLE IF NOT EXISTS attendance (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_id INTEGER NOT NULL REFERENCES students(id),
@@ -238,7 +228,6 @@ def initialize_database() -> None:
                 created_at TEXT NOT NULL,
                 UNIQUE(student_id, attendance_date)
             );
-
             CREATE TABLE IF NOT EXISTS assessments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -267,7 +256,6 @@ def initialize_database() -> None:
                 teacher_registry TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
-
             CREATE TABLE IF NOT EXISTS student_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_id INTEGER NOT NULL REFERENCES students(id),
@@ -280,12 +268,11 @@ def initialize_database() -> None:
                 teacher_email TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
-
             CREATE TABLE IF NOT EXISTS occurrences (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id INTEGER NOT NULL REFERENCES students(id),
-            occurrence_type TEXT NOT NULL,
-            severity TEXT NOT NULL,
+                student_id INTEGER NOT NULL REFERENCES students(id),
+                occurrence_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
             details TEXT NOT NULL,
             occurrence_date TEXT NOT NULL,
             teacher_name TEXT NOT NULL,
@@ -304,7 +291,7 @@ def initialize_database() -> None:
         );
         """
     )
-    
+
     migrations = {
         "reservations": {
             "teacher_name": "TEXT NOT NULL DEFAULT ''",
@@ -336,7 +323,7 @@ def initialize_database() -> None:
             "trimester": "TEXT NOT NULL DEFAULT ''",
         },
     }
-    
+
     for table, columns in migrations.items():
         existing = {
             row["name"]
@@ -345,11 +332,11 @@ def initialize_database() -> None:
         for column, definition in columns.items():
             if column not in existing:
                 connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-                
+
     authorization_schema = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'authorized_users'"
     ).fetchone()
-    
+
     if authorization_schema and "'Monitor'" not in (authorization_schema["sql"] or ""):
         connection.execute("SAVEPOINT authorized_users_role_migration")
         try:
@@ -385,15 +372,15 @@ def initialize_database() -> None:
             connection.execute("ROLLBACK TO SAVEPOINT authorized_users_role_migration")
             connection.execute("RELEASE SAVEPOINT authorized_users_role_migration")
             raise
-            
+
     for room in SALAS_CADASTRADAS:
         connection.execute("INSERT OR IGNORE INTO classrooms (name) VALUES (?)", (room,))
-        
+
     room_ids = {
         row["name"]: row["id"]
         for row in connection.execute("SELECT id, name FROM classrooms").fetchall()
     }
-    
+
     now = datetime.now().isoformat(timespec="minutes")
     for registry, user in MATRICULAS_PERMITIDAS.items():
         connection.execute(
@@ -411,8 +398,6 @@ def initialize_database() -> None:
                 now,
             ),
         )
-
-
 def fetch_all(query: str, parameters: tuple = ()) -> list[sqlite3.Row]:
     with connection_scope() as connection:
         return connection.execute(query, parameters).fetchall()
@@ -558,8 +543,6 @@ def add_authorized_teacher(
                 datetime.now().isoformat(timespec="minutes"),
             ),
         )
-
-
 def update_authorized_teacher(
     registry: str,
     name: str,
@@ -595,3 +578,77 @@ def update_authorized_teacher(
 
 def complete_teacher_profile(registry: str, name: str, email: str) -> None:
     with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE authorized_users
+            SET full_name = CASE WHEN full_name = '' THEN ? ELSE full_name END,
+                email = CASE WHEN email = '' THEN ? ELSE email END
+            WHERE registry = ? AND role IN ('Professor', 'Monitor')
+            """,
+            (name.strip(), email.strip().lower(), registry.strip().lower()),
+        )
+
+
+def students_in_classroom(classroom_id: int) -> list[sqlite3.Row]:
+    return fetch_all(
+        """
+        SELECT students.id, students.code, students.name, students.classroom_id,
+               students.allergies, students.food_restrictions, students.authorized_pickup,
+               students.emergency_contact, students.avatar, students.active,
+               classrooms.name AS classroom
+        FROM students JOIN classrooms ON classrooms.id = students.classroom_id
+        WHERE classrooms.id = ? AND students.active = 1
+        ORDER BY students.name
+        """,
+        (classroom_id,),
+    )
+
+
+def save_announcement(title: str, category: str, audience: str, body: str) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO announcements (title, category, audience, body, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                title.strip(),
+                category,
+                audience,
+                body.strip(),
+                datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+
+
+def add_reservation(
+    space: str,
+    teacher: dict[str, str],
+    group_name: str,
+    reservation_date: date,
+    start_time: time,
+    end_time: time,
+    purpose: str,
+) -> tuple[bool, str]:
+    start_text = start_time.strftime("%H:%M")
+    end_text = end_time.strftime("%H:%M")
+    with connection_scope() as connection:
+        conflict = connection.execute(
+            """
+            SELECT start_time, end_time
+            FROM reservations
+            WHERE space = ? AND reservation_date = ?
+              AND start_time < ? AND end_time > ?
+            LIMIT 1
+            """,
+            (space, reservation_date.isoformat(), end_text, start_text),
+        ).fetchone()
+        if conflict:
+            return False, f"Esse horário já está reservado ({conflict['start_time']}–{conflict['end_time']})."
+        connection.execute(
+            """
+            INSERT INTO reservations
+                (space, responsible, teacher_name, teacher_registry, teacher_email,
+                 group_name, reservation_date, start_time, end_time, purpose, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
