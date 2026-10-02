@@ -52,7 +52,25 @@ PEDAGOGICAL_PAGES = [
     "🧒 Carômetro e Histórico de Alunos",
     "📝 Planejamentos & Atas de Conselho",
     "🏢 Agendamento de Espaços",
+    "🚨 Ocorrências da Rotina",
+    "📝 Relatório Descritivo",
 ]
+MONITOR_PAGE = "🔎 Carômetro de Segurança"
+BNCC_EXPERIENCES = (
+    "O eu, o outro e o nós",
+    "Corpo, gestos e movimentos",
+    "Traços, sons, cores e formas",
+    "Escuta, fala, pensamento e imaginação",
+    "Espaços, tempos, quantidades, relações e transformações",
+)
+OCCURRENCE_TYPES = (
+    "Mordida/Arranhão",
+    "Queda/Escoriação",
+    "Febre/Sintomas de Saúde",
+    "Indisposição Alimentar",
+    "Outros",
+)
+OCCURRENCE_SEVERITIES = ("Leve", "Média", "Alta")
 AREAS_PEDAGOGICAS = (
     "Linguagem verbal",
     "Linguagem matemática",
@@ -197,15 +215,22 @@ def initialize_database() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 code TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
-                classroom_id INTEGER NOT NULL REFERENCES classrooms(id)
+                classroom_id INTEGER NOT NULL REFERENCES classrooms(id),
+                allergies TEXT NOT NULL DEFAULT '',
+                food_restrictions TEXT NOT NULL DEFAULT '',
+                authorized_pickup TEXT NOT NULL DEFAULT '',
+                emergency_contact TEXT NOT NULL DEFAULT '',
+                avatar TEXT NOT NULL DEFAULT '👶',
+                active INTEGER NOT NULL DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS authorized_users (
                 registry TEXT PRIMARY KEY,
-                role TEXT NOT NULL CHECK(role IN ('Administrador', 'Professor')),
+                role TEXT NOT NULL CHECK(role IN ('Administrador', 'Professor', 'Monitor')),
                 full_name TEXT NOT NULL DEFAULT '',
                 email TEXT NOT NULL DEFAULT '',
                 teacher_type TEXT NOT NULL DEFAULT 'Regular',
+                classroom_id INTEGER REFERENCES classrooms(id),
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             );
@@ -264,6 +289,29 @@ def initialize_database() -> None:
                 teacher_email TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS occurrences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER NOT NULL REFERENCES students(id),
+                occurrence_type TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                details TEXT NOT NULL,
+                occurrence_date TEXT NOT NULL,
+                teacher_name TEXT NOT NULL,
+                teacher_registry TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS development_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER NOT NULL REFERENCES students(id),
+                report_date TEXT NOT NULL,
+                social_interaction TEXT NOT NULL,
+                motor_language_development TEXT NOT NULL,
+                teacher_name TEXT NOT NULL,
+                teacher_registry TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
 
@@ -281,6 +329,15 @@ def initialize_database() -> None:
             },
             "authorized_users": {
                 "teacher_type": "TEXT NOT NULL DEFAULT 'Regular'",
+                "classroom_id": "INTEGER REFERENCES classrooms(id)",
+            },
+            "students": {
+                "allergies": "TEXT NOT NULL DEFAULT ''",
+                "food_restrictions": "TEXT NOT NULL DEFAULT ''",
+                "authorized_pickup": "TEXT NOT NULL DEFAULT ''",
+                "emergency_contact": "TEXT NOT NULL DEFAULT ''",
+                "avatar": "TEXT NOT NULL DEFAULT '👶'",
+                "active": "INTEGER NOT NULL DEFAULT 1",
             },
             "plans_minutes": {
                 "student_id": "INTEGER REFERENCES students(id)",
@@ -297,6 +354,45 @@ def initialize_database() -> None:
             for column, definition in columns.items():
                 if column not in existing:
                     connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+        authorization_schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'authorized_users'"
+        ).fetchone()
+        if authorization_schema and "'Monitor'" not in (authorization_schema["sql"] or ""):
+            connection.execute("SAVEPOINT authorized_users_role_migration")
+            try:
+                connection.execute("DROP TABLE IF EXISTS authorized_users_migrated")
+                connection.execute(
+                    """
+                    CREATE TABLE authorized_users_migrated (
+                        registry TEXT PRIMARY KEY,
+                        role TEXT NOT NULL CHECK(role IN ('Administrador', 'Professor', 'Monitor')),
+                        full_name TEXT NOT NULL DEFAULT '',
+                        email TEXT NOT NULL DEFAULT '',
+                        teacher_type TEXT NOT NULL DEFAULT 'Regular',
+                        classroom_id INTEGER REFERENCES classrooms(id),
+                        active INTEGER NOT NULL DEFAULT 1,
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO authorized_users_migrated
+                        (registry, role, full_name, email, teacher_type, classroom_id, active, created_at)
+                    SELECT registry, role, full_name, email, teacher_type, classroom_id, active, created_at
+                    FROM authorized_users
+                    """
+                )
+                connection.execute("DROP TABLE authorized_users")
+                connection.execute(
+                    "ALTER TABLE authorized_users_migrated RENAME TO authorized_users"
+                )
+                connection.execute("RELEASE SAVEPOINT authorized_users_role_migration")
+            except Exception:
+                connection.execute("ROLLBACK TO SAVEPOINT authorized_users_role_migration")
+                connection.execute("RELEASE SAVEPOINT authorized_users_role_migration")
+                raise
 
         for room in SALAS_CADASTRADAS:
             connection.execute("INSERT OR IGNORE INTO classrooms (name) VALUES (?)", (room,))
@@ -377,15 +473,37 @@ def classroom_rows() -> list[sqlite3.Row]:
     return [by_name[name] for name in SALAS_CADASTRADAS if name in by_name]
 
 
+def classrooms_for_teacher(teacher: dict[str, str | int | None]) -> list[sqlite3.Row]:
+    rooms = classroom_rows()
+    assigned_classroom = teacher.get("classroom_id")
+    if (
+        teacher.get("role") == "Professor"
+        and teacher.get("teacher_type") == "Regular"
+        and assigned_classroom is not None
+    ):
+        return [row for row in rooms if row["id"] == int(assigned_classroom)]
+    return rooms
+
+
 def get_authorized_user(registry: str) -> sqlite3.Row | None:
     return fetch_one(
-        "SELECT registry, role, full_name, email, teacher_type, active "
+        "SELECT registry, role, full_name, email, teacher_type, classroom_id, active "
         "FROM authorized_users WHERE registry = ?",
         (registry.strip().lower(),),
     )
 
 
-def add_student(name: str, classroom_id: int, code: str = "") -> str:
+def add_student(
+    name: str,
+    classroom_id: int,
+    code: str = "",
+    *,
+    allergies: str = "",
+    food_restrictions: str = "",
+    authorized_pickup: str = "",
+    emergency_contact: str = "",
+    avatar: str = "👶",
+) -> str:
     with connection_scope() as connection:
         if not code.strip():
             next_id = connection.execute(
@@ -393,26 +511,119 @@ def add_student(name: str, classroom_id: int, code: str = "") -> str:
             ).fetchone()["next_id"]
             code = f"ALU-{next_id:03d}"
         connection.execute(
-            "INSERT INTO students (code, name, classroom_id) VALUES (?, ?, ?)",
-            (code.strip().upper(), name.strip(), classroom_id),
+            """
+            INSERT INTO students
+                (code, name, classroom_id, allergies, food_restrictions,
+                 authorized_pickup, emergency_contact, avatar)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                code.strip().upper(),
+                name.strip(),
+                classroom_id,
+                allergies.strip(),
+                food_restrictions.strip(),
+                authorized_pickup.strip(),
+                emergency_contact.strip(),
+                avatar.strip() or "👶",
+            ),
         )
     return code.strip().upper()
 
 
-def add_authorized_teacher(name: str, registry: str, email: str, teacher_type: str) -> None:
+def update_student(
+    student_id: int,
+    name: str,
+    classroom_id: int,
+    allergies: str,
+    food_restrictions: str,
+    authorized_pickup: str,
+    emergency_contact: str,
+    avatar: str,
+    active: bool,
+) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE students
+            SET name = ?, classroom_id = ?, allergies = ?, food_restrictions = ?,
+                authorized_pickup = ?, emergency_contact = ?, avatar = ?, active = ?
+            WHERE id = ?
+            """,
+            (
+                name.strip(),
+                classroom_id,
+                allergies.strip(),
+                food_restrictions.strip(),
+                authorized_pickup.strip(),
+                emergency_contact.strip(),
+                avatar.strip() or "👶",
+                int(active),
+                student_id,
+            ),
+        )
+
+
+def add_authorized_teacher(
+    name: str,
+    registry: str,
+    email: str,
+    teacher_type: str,
+    role: str = "Professor",
+    classroom_id: int | None = None,
+) -> None:
+    if role not in ("Professor", "Monitor"):
+        raise ValueError("Cargo de funcionário inválido.")
+    if teacher_type not in ("Regular", "AEE"):
+        raise ValueError("Tipo de professor inválido.")
     with connection_scope() as connection:
         connection.execute(
             """
             INSERT INTO authorized_users
-                (registry, role, full_name, email, teacher_type, active, created_at)
-            VALUES (?, 'Professor', ?, ?, ?, 1, ?)
+                (registry, role, full_name, email, teacher_type, classroom_id, active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
             """,
             (
                 registry.strip().lower(),
+                role,
                 name.strip(),
                 email.strip().lower(),
-                teacher_type,
+                teacher_type if role == "Professor" else "Regular",
+                classroom_id,
                 datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+
+
+def update_authorized_teacher(
+    registry: str,
+    name: str,
+    email: str,
+    role: str,
+    teacher_type: str,
+    classroom_id: int | None,
+    active: bool,
+) -> None:
+    if role not in ("Professor", "Monitor"):
+        raise ValueError("Cargo de funcionário inválido.")
+    if teacher_type not in ("Regular", "AEE"):
+        raise ValueError("Tipo de professor inválido.")
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE authorized_users
+            SET full_name = ?, email = ?, role = ?, teacher_type = ?,
+                classroom_id = ?, active = ?
+            WHERE registry = ? AND role != 'Administrador'
+            """,
+            (
+                name.strip(),
+                email.strip().lower(),
+                role,
+                teacher_type if role == "Professor" else "Regular",
+                classroom_id,
+                int(active),
+                registry.strip().lower(),
             ),
         )
 
@@ -424,7 +635,7 @@ def complete_teacher_profile(registry: str, name: str, email: str) -> None:
             UPDATE authorized_users
             SET full_name = CASE WHEN full_name = '' THEN ? ELSE full_name END,
                 email = CASE WHEN email = '' THEN ? ELSE email END
-            WHERE registry = ? AND role = 'Professor'
+            WHERE registry = ? AND role IN ('Professor', 'Monitor')
             """,
             (name.strip(), email.strip().lower(), registry.strip().lower()),
         )
@@ -433,9 +644,12 @@ def complete_teacher_profile(registry: str, name: str, email: str) -> None:
 def students_in_classroom(classroom_id: int) -> list[sqlite3.Row]:
     return fetch_all(
         """
-        SELECT students.id, students.code, students.name, classrooms.name AS classroom
+        SELECT students.id, students.code, students.name, students.classroom_id,
+               students.allergies, students.food_restrictions, students.authorized_pickup,
+               students.emergency_contact, students.avatar, students.active,
+               classrooms.name AS classroom
         FROM students JOIN classrooms ON classrooms.id = students.classroom_id
-        WHERE classrooms.id = ?
+        WHERE classrooms.id = ? AND students.active = 1
         ORDER BY students.name
         """,
         (classroom_id,),
@@ -676,6 +890,102 @@ def save_student_history(
         )
 
 
+def save_occurrence(
+    student_id: int,
+    occurrence_type: str,
+    severity: str,
+    details: str,
+    occurrence_date: date,
+    teacher: dict[str, str],
+) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO occurrences
+                (student_id, occurrence_type, severity, details, occurrence_date,
+                 teacher_name, teacher_registry, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                student_id,
+                occurrence_type,
+                severity,
+                details.strip(),
+                occurrence_date.isoformat(),
+                teacher["name"],
+                teacher["registry"],
+                datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+
+
+def save_development_report(
+    student_id: int,
+    report_date: date,
+    social_interaction: str,
+    motor_language_development: str,
+    teacher: dict[str, str],
+) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO development_reports
+                (student_id, report_date, social_interaction, motor_language_development,
+                 teacher_name, teacher_registry, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                student_id,
+                report_date.isoformat(),
+                social_interaction.strip(),
+                motor_language_development.strip(),
+                teacher["name"],
+                teacher["registry"],
+                datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+
+
+def consecutive_absence_alerts(minimum_streak: int = 3) -> list[dict[str, str | int]]:
+    rows = fetch_all(
+        """
+        SELECT students.id AS student_id, students.name, students.code,
+               students.emergency_contact, classrooms.name AS classroom,
+               attendance.attendance_date, attendance.status
+        FROM attendance
+        JOIN students ON students.id = attendance.student_id
+        JOIN classrooms ON classrooms.id = students.classroom_id
+        WHERE students.active = 1
+        ORDER BY students.id, attendance.attendance_date DESC, attendance.id DESC
+        """
+    )
+    by_student: dict[int, list[sqlite3.Row]] = {}
+    for row in rows:
+        by_student.setdefault(row["student_id"], []).append(row)
+
+    alerts: list[dict[str, str | int]] = []
+    for student_rows in by_student.values():
+        streak = 0
+        for row in student_rows:
+            if row["status"] == "Presente":
+                break
+            streak += 1
+        if streak >= minimum_streak:
+            latest = student_rows[0]
+            alerts.append(
+                {
+                    "student_id": latest["student_id"],
+                    "name": latest["name"],
+                    "code": latest["code"],
+                    "classroom": latest["classroom"],
+                    "emergency_contact": latest["emergency_contact"],
+                    "streak": streak,
+                    "last_absence": latest["attendance_date"],
+                }
+            )
+    return sorted(alerts, key=lambda alert: (-int(alert["streak"]), str(alert["name"])))
+
+
 def delete_record(table: str, record_id: int) -> None:
     allowed_tables = {
         "announcements",
@@ -777,14 +1087,17 @@ def render_login() -> None:
                     "email": normalized_email or account["email"],
                     "role": "Administrador",
                     "teacher_type": account["teacher_type"],
+                    "classroom_id": account["classroom_id"],
                 }
                 st.rerun()
         else:
             resolved_name = account["full_name"] or teacher_name.strip()
             resolved_email = account["email"] or normalized_email
-            if not resolved_name or not resolved_email:
-                st.error("Preencha o nome e o e-mail, ou solicite ao administrador que complete seu cadastro.")
-            elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", resolved_email):
+            if not resolved_name:
+                st.error("Preencha o nome ou solicite ao administrador que complete seu cadastro.")
+            elif account["role"] == "Professor" and not resolved_email:
+                st.error("Professores precisam ter um e-mail cadastrado.")
+            elif resolved_email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", resolved_email):
                 st.error("Informe um endereço de e-mail válido.")
             else:
                 complete_teacher_profile(account["registry"], resolved_name, resolved_email)
@@ -792,8 +1105,9 @@ def render_login() -> None:
                     "name": resolved_name,
                     "registry": account["registry"],
                     "email": resolved_email,
-                    "role": "Professor",
+                    "role": account["role"],
                     "teacher_type": account["teacher_type"],
+                    "classroom_id": account["classroom_id"],
                 }
                 st.rerun()
 
@@ -843,7 +1157,7 @@ def render_announcements() -> None:
 def render_daily_attendance(teacher: dict[str, str]) -> None:
     st.subheader("Chamada Diária")
     st.caption("Registre presença por turma e consulte as chamadas já salvas.")
-    rooms = classroom_rows()
+    rooms = classrooms_for_teacher(teacher)
     room_names = [row["name"] for row in rooms]
     selected_room = st.selectbox("Sala de aula", room_names, key="attendance_room")
     classroom_id = next(row["id"] for row in rooms if row["name"] == selected_room)
@@ -1093,7 +1407,7 @@ h3 {{ font-size: 15px; margin: 14px 0 4px; }}
 
 def render_plans_minutes(teacher: dict[str, str]) -> None:
     st.subheader("Planejamentos & Atas de Conselho")
-    rooms = classroom_rows()
+    rooms = classrooms_for_teacher(teacher)
     room_names = [row["name"] for row in rooms]
     room_ids = {row["name"]: row["id"] for row in rooms}
     teacher_type = teacher.get("teacher_type", "Regular")
@@ -1116,6 +1430,16 @@ def render_plans_minutes(teacher: dict[str, str]) -> None:
                 quinzena = col2.selectbox("Quinzena", QUINZENAS, key="regular_plan_quinzena")
                 record_date = col3.date_input("Data do registro", value=date.today(), key="regular_plan_date")
                 room_name = st.selectbox("Turma", room_names, key="regular_plan_room")
+                bncc_experiences = st.multiselect(
+                    "Campos de Experiência (BNCC)",
+                    BNCC_EXPERIENCES,
+                    key="regular_plan_bncc",
+                )
+                general_activities = st.text_area(
+                    "Descrição das vivências e brincadeiras",
+                    height=110,
+                    key="regular_plan_general_activities",
+                )
                 activities = {
                     area: st.text_area(
                         f"{area} — objetivos e atividades",
@@ -1129,7 +1453,11 @@ def render_plans_minutes(teacher: dict[str, str]) -> None:
                 missing_areas = [
                     area for area, text in activities.items() if not text.strip()
                 ]
-                if missing_areas:
+                if not bncc_experiences:
+                    st.error("Selecione ao menos um Campo de Experiência da BNCC.")
+                elif not general_activities.strip():
+                    st.error("Descreva as vivências e brincadeiras do período.")
+                elif missing_areas:
                     st.error("Preencha as seis áreas. Faltam: " + ", ".join(missing_areas))
                 else:
                     record_id = save_plan_or_minutes(
@@ -1138,7 +1466,14 @@ def render_plans_minutes(teacher: dict[str, str]) -> None:
                         room_ids[room_name],
                         "Planejamento por áreas",
                         f"Planejamento Quinzenal — {month_name} — {quinzena}",
-                        json.dumps({"activities": activities}, ensure_ascii=False),
+                        json.dumps(
+                            {
+                                "activities": activities,
+                                "bncc_experiences": bncc_experiences,
+                                "general_activities": general_activities.strip(),
+                            },
+                            ensure_ascii=False,
+                        ),
                         teacher,
                         month_name=month_name,
                         quinzena=quinzena,
@@ -1152,7 +1487,7 @@ def render_plans_minutes(teacher: dict[str, str]) -> None:
                 SELECT students.id, students.code, students.name, students.classroom_id,
                        classrooms.name AS classroom
                 FROM students JOIN classrooms ON classrooms.id = students.classroom_id
-                WHERE classrooms.name IN ({})
+                WHERE students.active = 1 AND classrooms.name IN ({})
                 ORDER BY students.name, students.code
                 """.format(",".join("?" for _ in SALAS_CADASTRADAS)),
                 SALAS_CADASTRADAS,
@@ -1312,6 +1647,13 @@ def render_plans_minutes(teacher: dict[str, str]) -> None:
 
             if row["record_type"] == "Planejamento Quinzenal":
                 activities = payload.get("activities", {})
+                bncc_experiences = payload.get("bncc_experiences", [])
+                if bncc_experiences:
+                    st.markdown("**Campos de Experiência (BNCC)**")
+                    st.write(", ".join(bncc_experiences))
+                if payload.get("general_activities"):
+                    st.markdown("**Vivências e brincadeiras**")
+                    st.write(payload["general_activities"])
                 for area in AREAS_PEDAGOGICAS:
                     st.markdown(f"**{area}**")
                     st.write(activities.get(area, ""))
@@ -1355,8 +1697,8 @@ def render_plans_minutes(teacher: dict[str, str]) -> None:
 
 def render_student_directory(teacher: dict[str, str]) -> None:
     st.subheader("Carômetro e Histórico de Alunos")
-    st.caption("Os nomes e códigos exibidos são fictícios e servem apenas para demonstração.")
-    rooms = classroom_rows()
+    st.caption("Consulte os alunos ativos e os registros pedagógicos vinculados ao seu acesso.")
+    rooms = classrooms_for_teacher(teacher)
     selected_room = st.selectbox("Filtrar por sala de aula", [row["name"] for row in rooms], key="student_room")
     classroom_id = next(row["id"] for row in rooms if row["name"] == selected_room)
     students = students_in_classroom(classroom_id)
@@ -1384,6 +1726,12 @@ def render_student_directory(teacher: dict[str, str]) -> None:
     st.divider()
     st.markdown(f"### Histórico de {student['name']}")
     st.caption(f"Código: {student['code']} · Sala: {student['classroom']}")
+    if teacher.get("role") == "Administrador":
+        with st.expander("Dados de segurança do aluno"):
+            st.write(f"**Alergias:** {student['allergies'] or 'Não informado'}")
+            st.write(f"**Restrições alimentares:** {student['food_restrictions'] or 'Não informado'}")
+            st.write(f"**Autorizados para retirada:** {student['authorized_pickup'] or 'Não informado'}")
+            st.write(f"**Contato de emergência:** {student['emergency_contact'] or 'Não informado'}")
 
     with st.form(f"student_history_form_{student['id']}", clear_on_submit=True):
         record_type = st.selectbox(
@@ -1423,6 +1771,212 @@ def render_student_directory(teacher: dict[str, str]) -> None:
             if st.button("Excluir registro", key=f"delete_student_history_{record['id']}"):
                 delete_record("student_history", record["id"])
                 st.rerun()
+
+
+def render_student_safety() -> None:
+    st.subheader("Carômetro de Segurança Escolar")
+    st.caption("Acesso rápido a informações necessárias para o cuidado e a retirada dos alunos.")
+    search = st.text_input("Buscar aluno por nome, código ou turma")
+    pattern = f"%{search.strip()}%"
+    students = fetch_all(
+        """
+        SELECT students.id, students.code, students.name, students.allergies,
+               students.food_restrictions, students.authorized_pickup,
+               students.emergency_contact, students.avatar,
+               classrooms.name AS classroom
+        FROM students
+        JOIN classrooms ON classrooms.id = students.classroom_id
+        WHERE students.active = 1
+          AND (? = '' OR students.name LIKE ? OR students.code LIKE ? OR classrooms.name LIKE ?)
+        ORDER BY students.name
+        """,
+        (search.strip(), pattern, pattern, pattern),
+    )
+    if not students:
+        st.info("Nenhum aluno ativo corresponde à busca.")
+        return
+    for student in students:
+        with st.container(border=True):
+            avatar = student["avatar"] or "👶"
+            st.subheader(f"{avatar} {student['name']}")
+            st.caption(f"{student['classroom']} · {student['code']}")
+            left, right = st.columns(2)
+            with left:
+                st.markdown(f"**Alergias:** {student['allergies'] or 'Não informado'}")
+                st.markdown(
+                    f"**Restrições alimentares:** "
+                    f"{student['food_restrictions'] or 'Não informado'}"
+                )
+            with right:
+                st.markdown(
+                    f"**Autorizados para retirada:** "
+                    f"{student['authorized_pickup'] or 'Não informado'}"
+                )
+                st.markdown(
+                    f"**Contato de emergência:** "
+                    f"{student['emergency_contact'] or 'Não informado'}"
+                )
+
+
+def render_occurrences(teacher: dict[str, str], admin_view: bool = False) -> None:
+    st.subheader("Ocorrências da Rotina")
+    if not admin_view:
+        rooms = classrooms_for_teacher(teacher)
+        if not rooms:
+            st.info("Nenhuma turma está disponível para este cadastro.")
+            return
+        room_name = st.selectbox(
+            "Turma da ocorrência",
+            [row["name"] for row in rooms],
+            key="occurrence_room",
+        )
+        classroom_id = next(row["id"] for row in rooms if row["name"] == room_name)
+        students = students_in_classroom(classroom_id)
+        if not students:
+            st.info("Não há alunos ativos nesta turma.")
+            return
+        student_labels = {
+            f"{row['name']} · {row['code']}": row["id"] for row in students
+        }
+        with st.form("occurrence_form", clear_on_submit=True):
+            student_label = st.selectbox("Criança envolvida", list(student_labels))
+            occurrence_type = st.selectbox("Tipo de ocorrência", OCCURRENCE_TYPES)
+            severity = st.select_slider(
+                "Classificação de gravidade",
+                options=OCCURRENCE_SEVERITIES,
+            )
+            occurrence_date = st.date_input("Data da ocorrência", value=date.today())
+            details = st.text_area("Descrição detalhada", height=120)
+            submitted = st.form_submit_button("Registrar ocorrência", type="primary")
+        if submitted:
+            if not details.strip():
+                st.error("Descreva a ocorrência antes de registrar.")
+            else:
+                save_occurrence(
+                    student_labels[student_label],
+                    occurrence_type,
+                    severity,
+                    details,
+                    occurrence_date,
+                    teacher,
+                )
+                st.success("Ocorrência registrada.")
+
+    if admin_view:
+        rows = fetch_all(
+            """
+            SELECT occurrences.id, occurrences.occurrence_type, occurrences.severity,
+                   occurrences.details, occurrences.occurrence_date,
+                   occurrences.teacher_name, students.name AS student_name,
+                   students.code, classrooms.name AS classroom
+            FROM occurrences
+            JOIN students ON students.id = occurrences.student_id
+            JOIN classrooms ON classrooms.id = students.classroom_id
+            ORDER BY occurrences.occurrence_date DESC, occurrences.id DESC
+            """
+        )
+    else:
+        rows = fetch_all(
+            """
+            SELECT occurrences.id, occurrences.occurrence_type, occurrences.severity,
+                   occurrences.details, occurrences.occurrence_date,
+                   occurrences.teacher_name, students.name AS student_name,
+                   students.code, classrooms.name AS classroom
+            FROM occurrences
+            JOIN students ON students.id = occurrences.student_id
+            JOIN classrooms ON classrooms.id = students.classroom_id
+            WHERE occurrences.teacher_registry = ?
+            ORDER BY occurrences.occurrence_date DESC, occurrences.id DESC
+            """,
+            (teacher["registry"],),
+        )
+    st.divider()
+    st.markdown("#### Histórico de ocorrências")
+    if not rows:
+        st.info("Nenhuma ocorrência registrada.")
+        return
+    for row in rows:
+        with st.expander(
+            f"{row['occurrence_type']} · {row['student_name']} · "
+            f"{format_date(row['occurrence_date'])} · {row['severity']}"
+        ):
+            st.caption(f"{row['classroom']} · {row['code']} · Registrado por {row['teacher_name']}")
+            st.write(row["details"])
+
+
+def render_development_reports(teacher: dict[str, str], admin_view: bool = False) -> None:
+    st.subheader("Relatório Descritivo de Desenvolvimento")
+    if not admin_view:
+        rooms = classrooms_for_teacher(teacher)
+        if not rooms:
+            st.info("Nenhuma turma está disponível para este cadastro.")
+            return
+        room_name = st.selectbox(
+            "Turma do relatório",
+            [row["name"] for row in rooms],
+            key="development_report_room",
+        )
+        classroom_id = next(row["id"] for row in rooms if row["name"] == room_name)
+        students = students_in_classroom(classroom_id)
+        if not students:
+            st.info("Não há alunos ativos nesta turma.")
+            return
+        student_labels = {
+            f"{row['name']} · {row['code']}": row["id"] for row in students
+        }
+        with st.form("development_report_form", clear_on_submit=True):
+            student_label = st.selectbox("Aluno", list(student_labels))
+            report_date = st.date_input("Data do parecer", value=date.today())
+            social_interaction = st.text_area("Aspectos sociais e interação", height=120)
+            motor_language_development = st.text_area(
+                "Desenvolvimento motor e linguagem",
+                height=120,
+            )
+            submitted = st.form_submit_button("Salvar parecer pedagógico", type="primary")
+        if submitted:
+            if not social_interaction.strip() or not motor_language_development.strip():
+                st.error("Preencha os dois campos do relatório descritivo.")
+            else:
+                save_development_report(
+                    student_labels[student_label],
+                    report_date,
+                    social_interaction,
+                    motor_language_development,
+                    teacher,
+                )
+                st.success("Relatório descritivo salvo.")
+
+    query = """
+        SELECT development_reports.id, development_reports.report_date,
+               development_reports.social_interaction,
+               development_reports.motor_language_development,
+               development_reports.teacher_name, students.name AS student_name,
+               students.code, classrooms.name AS classroom
+        FROM development_reports
+        JOIN students ON students.id = development_reports.student_id
+        JOIN classrooms ON classrooms.id = students.classroom_id
+    """
+    parameters: tuple = ()
+    if not admin_view and teacher.get("classroom_id") is not None:
+        query += " WHERE students.classroom_id = ?"
+        parameters = (teacher["classroom_id"],)
+    query += " ORDER BY development_reports.report_date DESC, development_reports.id DESC"
+    rows = fetch_all(query, parameters)
+    st.divider()
+    st.markdown("#### Relatórios registrados")
+    if not rows:
+        st.info("Nenhum relatório descritivo registrado.")
+        return
+    for row in rows:
+        with st.expander(
+            f"{row['student_name']} · {row['classroom']} · "
+            f"{format_date(row['report_date'])}"
+        ):
+            st.markdown("**Aspectos sociais e interação**")
+            st.write(row["social_interaction"])
+            st.markdown("**Desenvolvimento motor e linguagem**")
+            st.write(row["motor_language_development"])
+            st.caption(f"Registrado por {row['teacher_name']}")
 
 
 def render_space_booking(teacher: dict[str, str]) -> None:
@@ -1657,21 +2211,48 @@ def render_aee_reports(teacher: dict[str, str]) -> None:
             st.warning("Marque a confirmação para excluir.")
 
 
-def render_admin_panel() -> None:
-    st.subheader("Painel de Controle")
-    st.caption("Cadastros disponíveis somente para a matrícula administrativa.")
-    students_tab, teachers_tab = st.tabs(["Cadastrar aluno", "Cadastrar professor"])
+def render_absence_alerts() -> None:
+    st.subheader("Alertas de faltas consecutivas")
+    st.caption(
+        "Conta ausências nos dias com chamada registrada; faltas justificadas também contam."
+    )
+    alerts = consecutive_absence_alerts(minimum_streak=3)
+    if not alerts:
+        st.success("Nenhum aluno ativo atingiu três ausências consecutivas nas chamadas registradas.")
+        return
+    for alert in alerts:
+        contact = alert["emergency_contact"] or "Contato de emergência não cadastrado"
+        st.error(
+            f"{alert['name']} ({alert['code']}) · {alert['classroom']} — "
+            f"{alert['streak']} ausências consecutivas. "
+            f"Última chamada: {format_date(str(alert['last_absence']))}. "
+            f"Contato: {contact}."
+        )
 
-    with students_tab:
-        rooms = classroom_rows()
-        room_names = [row["name"] for row in rooms]
+
+def render_admin_student_management() -> None:
+    rooms = classroom_rows()
+    room_names = [row["name"] for row in rooms]
+    action = st.radio(
+        "Operação de alunos",
+        ["Cadastrar novo", "Editar / ativar ou arquivar"],
+        horizontal=True,
+        key="admin_student_action",
+    )
+
+    if action == "Cadastrar novo":
         with st.form("admin_student_form", clear_on_submit=True):
             student_name = st.text_input("Nome do aluno")
-            room_name = st.selectbox("Turma", room_names)
+            room_name = st.selectbox("Turma", room_names, key="admin_new_student_room")
             student_code = st.text_input(
                 "Código do aluno (opcional)",
                 placeholder="Gerado automaticamente se vazio",
             )
+            allergies = st.text_area("Alergias", height=70)
+            food_restrictions = st.text_area("Restrições alimentares", height=70)
+            authorized_pickup = st.text_area("Pessoas autorizadas para retirada", height=70)
+            emergency_contact = st.text_input("Contato de emergência")
+            avatar = st.text_input("Ícone do carômetro", value="👶", max_chars=8)
             submitted = st.form_submit_button("Cadastrar aluno", type="primary")
         if submitted:
             if not student_name.strip():
@@ -1679,76 +2260,348 @@ def render_admin_panel() -> None:
             else:
                 classroom_id = next(row["id"] for row in rooms if row["name"] == room_name)
                 try:
-                    created_code = add_student(student_name, classroom_id, student_code)
+                    created_code = add_student(
+                        student_name,
+                        classroom_id,
+                        student_code,
+                        allergies=allergies,
+                        food_restrictions=food_restrictions,
+                        authorized_pickup=authorized_pickup,
+                        emergency_contact=emergency_contact,
+                        avatar=avatar,
+                    )
                     st.success(f"Aluno cadastrado em {room_name}. Código: {created_code}.")
                 except sqlite3.IntegrityError:
                     st.error("Esse código já está em uso. Informe outro código ou deixe o campo vazio.")
-
+    else:
         student_rows = fetch_all(
             """
-            SELECT students.code, students.name, classrooms.name AS classroom
-            FROM students JOIN classrooms ON classrooms.id = students.classroom_id
+            SELECT students.id, students.code, students.name, students.classroom_id,
+                   students.allergies, students.food_restrictions,
+                   students.authorized_pickup, students.emergency_contact,
+                   students.avatar, students.active, classrooms.name AS classroom
+            FROM students
+            JOIN classrooms ON classrooms.id = students.classroom_id
             WHERE classrooms.name IN ({})
-            ORDER BY classrooms.name, students.name
+            ORDER BY students.active DESC, students.name
             """.format(",".join("?" for _ in SALAS_CADASTRADAS)),
             SALAS_CADASTRADAS,
         )
-        st.markdown("#### Alunos cadastrados")
-        st.dataframe(
-            [{"Código": row["code"], "Aluno": row["name"], "Turma": row["classroom"]} for row in student_rows],
-            width="stretch",
-            hide_index=True,
-        )
-
-    with teachers_tab:
-        with st.form("admin_teacher_form", clear_on_submit=True):
-            teacher_name = st.text_input("Nome completo do professor")
-            teacher_registry = st.text_input("Matrícula permitida")
-            teacher_email = st.text_input("E-mail institucional")
-            teacher_type_label = st.selectbox(
-                "Cargo do profissional",
-                ["Professor Regular", "Professor AEE"],
+        if not student_rows:
+            st.info("Ainda não há alunos cadastrados.")
+        else:
+            student_labels = {
+                (
+                    f"{row['name']} · {row['code']} · {row['classroom']}"
+                    f"{'' if row['active'] else ' · Arquivado'}"
+                ): row["id"]
+                for row in student_rows
+            }
+            selected_label = st.selectbox("Selecione o aluno", list(student_labels))
+            student = next(
+                row for row in student_rows if row["id"] == student_labels[selected_label]
             )
-            submitted = st.form_submit_button("Cadastrar professor", type="primary")
+            selected_room_index = (
+                room_names.index(student["classroom"])
+                if student["classroom"] in room_names
+                else 0
+            )
+            with st.form(f"edit_student_form_{student['id']}"):
+                student_name = st.text_input(
+                    "Nome do aluno",
+                    value=student["name"],
+                    key=f"edit_student_name_{student['id']}",
+                )
+                room_name = st.selectbox(
+                    "Turma",
+                    room_names,
+                    index=selected_room_index,
+                    key=f"edit_student_room_{student['id']}",
+                )
+                st.text_input("Código do aluno", value=student["code"], disabled=True)
+                allergies = st.text_area(
+                    "Alergias",
+                    value=student["allergies"],
+                    key=f"edit_student_allergies_{student['id']}",
+                    height=70,
+                )
+                food_restrictions = st.text_area(
+                    "Restrições alimentares",
+                    value=student["food_restrictions"],
+                    key=f"edit_student_food_{student['id']}",
+                    height=70,
+                )
+                authorized_pickup = st.text_area(
+                    "Pessoas autorizadas para retirada",
+                    value=student["authorized_pickup"],
+                    key=f"edit_student_pickup_{student['id']}",
+                    height=70,
+                )
+                emergency_contact = st.text_input(
+                    "Contato de emergência",
+                    value=student["emergency_contact"],
+                    key=f"edit_student_contact_{student['id']}",
+                )
+                avatar = st.text_input(
+                    "Ícone do carômetro",
+                    value=student["avatar"] or "👶",
+                    max_chars=8,
+                    key=f"edit_student_avatar_{student['id']}",
+                )
+                active = st.checkbox(
+                    "Cadastro ativo",
+                    value=bool(student["active"]),
+                    key=f"edit_student_active_{student['id']}",
+                )
+                confirm_archive = st.checkbox(
+                    "Confirmo o arquivamento, se o cadastro estiver inativo",
+                    key=f"confirm_archive_student_{student['id']}",
+                )
+                submitted = st.form_submit_button("Salvar alterações", type="primary")
+            if submitted:
+                if not student_name.strip():
+                    st.error("Informe o nome do aluno.")
+                elif bool(student["active"]) and not active and not confirm_archive:
+                    st.error("Confirme o arquivamento para preservar o histórico sem exibir o aluno nos cadastros ativos.")
+                else:
+                    classroom_id = next(row["id"] for row in rooms if row["name"] == room_name)
+                    update_student(
+                        student["id"],
+                        student_name,
+                        classroom_id,
+                        allergies,
+                        food_restrictions,
+                        authorized_pickup,
+                        emergency_contact,
+                        avatar,
+                        active,
+                    )
+                    st.success("Cadastro do aluno atualizado.")
+
+    student_rows = fetch_all(
+        """
+        SELECT students.code, students.name, classrooms.name AS classroom,
+               students.active
+        FROM students
+        JOIN classrooms ON classrooms.id = students.classroom_id
+        WHERE classrooms.name IN ({})
+        ORDER BY classrooms.name, students.name
+        """.format(",".join("?" for _ in SALAS_CADASTRADAS)),
+        SALAS_CADASTRADAS,
+    )
+    st.markdown("#### Alunos cadastrados")
+    st.dataframe(
+        [
+            {
+                "Código": row["code"],
+                "Aluno": row["name"],
+                "Turma": row["classroom"],
+                "Situação": "Ativo" if row["active"] else "Arquivado",
+            }
+            for row in student_rows
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def staff_label(row: sqlite3.Row) -> str:
+    if row["role"] == "Monitor":
+        return "Monitor"
+    return "Professor AEE" if row["teacher_type"] == "AEE" else "Professor Regular"
+
+
+def render_admin_staff_management() -> None:
+    rooms = classroom_rows()
+    room_names = [row["name"] for row in rooms]
+    classroom_options = ["Sem turma específica", *room_names]
+    action = st.radio(
+        "Operação da equipe",
+        ["Cadastrar novo", "Editar / ativar ou arquivar"],
+        horizontal=True,
+        key="admin_staff_action",
+    )
+    role_options = ["Professor Regular", "Professor AEE", "Monitor"]
+
+    if action == "Cadastrar novo":
+        with st.form("admin_teacher_form", clear_on_submit=True):
+            teacher_name = st.text_input("Nome completo")
+            teacher_registry = st.text_input("Matrícula permitida")
+            teacher_email = st.text_input("E-mail institucional (obrigatório para professores)")
+            role_label = st.selectbox("Cargo do profissional", role_options)
+            classroom_label = st.selectbox("Turma atribuída", classroom_options)
+            submitted = st.form_submit_button("Cadastrar profissional", type="primary")
         if submitted:
             registry = teacher_registry.strip().lower()
             email = teacher_email.strip().lower()
-            teacher_type = "AEE" if teacher_type_label == "Professor AEE" else "Regular"
-            if not teacher_name.strip() or not registry or not email:
-                st.error("Preencha o nome, a matrícula e o e-mail.")
+            role = "Monitor" if role_label == "Monitor" else "Professor"
+            teacher_type = "AEE" if role_label == "Professor AEE" else "Regular"
+            classroom_id = (
+                None
+                if classroom_label == "Sem turma específica"
+                else next(row["id"] for row in rooms if row["name"] == classroom_label)
+            )
+            if not teacher_name.strip() or not registry:
+                st.error("Preencha o nome e a matrícula.")
             elif registry == "adm123":
                 st.error("Essa matrícula é reservada ao administrador.")
-            elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-                st.error("Informe um endereço de e-mail válido.")
+            elif role == "Professor" and not email:
+                st.error("Professores precisam ter um e-mail cadastrado.")
+            elif email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+                st.error("Informe um endereço de e-mail válido ou deixe-o em branco para Monitores.")
             else:
                 try:
-                    add_authorized_teacher(teacher_name, registry, email, teacher_type)
-                    st.success("Professor cadastrado e autorizado a entrar.")
+                    add_authorized_teacher(
+                        teacher_name,
+                        registry,
+                        email,
+                        teacher_type,
+                        role=role,
+                        classroom_id=classroom_id,
+                    )
+                    st.success(f"{role_label} cadastrado e autorizado a entrar.")
                 except sqlite3.IntegrityError:
                     st.error("Essa matrícula já está cadastrada.")
-
-        teacher_rows = fetch_all(
+    else:
+        staff_rows = fetch_all(
             """
-            SELECT registry, full_name, email, teacher_type
+            SELECT authorized_users.registry, authorized_users.role,
+                   authorized_users.full_name, authorized_users.email,
+                   authorized_users.teacher_type, authorized_users.classroom_id,
+                   authorized_users.active, classrooms.name AS classroom
             FROM authorized_users
-            WHERE role = 'Professor' AND active = 1
-            ORDER BY full_name, registry
+            LEFT JOIN classrooms ON classrooms.id = authorized_users.classroom_id
+            WHERE authorized_users.role IN ('Professor', 'Monitor')
+            ORDER BY authorized_users.active DESC, authorized_users.full_name,
+                     authorized_users.registry
             """
         )
-        st.markdown("#### Professores autorizados")
-        st.dataframe(
-            [
-                {
-                    "Matrícula": row["registry"],
-                    "Professor": row["full_name"] or "Nome informado no acesso",
-                    "E-mail": row["email"] or "Informado no acesso",
-                    "Cargo": "Professor AEE" if row["teacher_type"] == "AEE" else "Professor Regular",
-                }
-                for row in teacher_rows
-            ],
-            width="stretch",
-            hide_index=True,
-        )
+        if not staff_rows:
+            st.info("Ainda não há professores ou Monitores cadastrados.")
+        else:
+            staff_labels = {
+                (
+                    f"{row['full_name'] or row['registry']} · {row['registry']} · "
+                    f"{staff_label(row)}"
+                    f"{'' if row['active'] else ' · Arquivado'}"
+                ): row["registry"]
+                for row in staff_rows
+            }
+            selected_label = st.selectbox("Selecione o profissional", list(staff_labels))
+            staff = next(
+                row for row in staff_rows if row["registry"] == staff_labels[selected_label]
+            )
+            current_role = staff_label(staff)
+            current_room = staff["classroom"] or "Sem turma específica"
+            room_index = (
+                classroom_options.index(current_room)
+                if current_room in classroom_options
+                else 0
+            )
+            with st.form(f"edit_staff_form_{staff['registry']}"):
+                name = st.text_input(
+                    "Nome completo",
+                    value=staff["full_name"],
+                    key=f"edit_staff_name_{staff['registry']}",
+                )
+                st.text_input("Matrícula", value=staff["registry"], disabled=True)
+                email = st.text_input(
+                    "E-mail institucional",
+                    value=staff["email"],
+                    key=f"edit_staff_email_{staff['registry']}",
+                )
+                role_label = st.selectbox(
+                    "Cargo do profissional",
+                    role_options,
+                    index=role_options.index(current_role),
+                    key=f"edit_staff_role_{staff['registry']}",
+                )
+                classroom_label = st.selectbox(
+                    "Turma atribuída",
+                    classroom_options,
+                    index=room_index,
+                    key=f"edit_staff_room_{staff['registry']}",
+                )
+                active = st.checkbox(
+                    "Cadastro ativo",
+                    value=bool(staff["active"]),
+                    key=f"edit_staff_active_{staff['registry']}",
+                )
+                confirm_archive = st.checkbox(
+                    "Confirmo o arquivamento, se o cadastro estiver inativo",
+                    key=f"confirm_archive_staff_{staff['registry']}",
+                )
+                submitted = st.form_submit_button("Salvar alterações", type="primary")
+            if submitted:
+                email = email.strip().lower()
+                role = "Monitor" if role_label == "Monitor" else "Professor"
+                teacher_type = "AEE" if role_label == "Professor AEE" else "Regular"
+                classroom_id = (
+                    None
+                    if classroom_label == "Sem turma específica"
+                    else next(row["id"] for row in rooms if row["name"] == classroom_label)
+                )
+                if not name.strip():
+                    st.error("Informe o nome do profissional.")
+                elif role == "Professor" and not email:
+                    st.error("Professores precisam ter um e-mail cadastrado.")
+                elif email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+                    st.error("Informe um endereço de e-mail válido.")
+                elif bool(staff["active"]) and not active and not confirm_archive:
+                    st.error("Confirme o arquivamento do cadastro.")
+                else:
+                    update_authorized_teacher(
+                        staff["registry"],
+                        name,
+                        email,
+                        role,
+                        teacher_type,
+                        classroom_id,
+                        active,
+                    )
+                    st.success("Cadastro do profissional atualizado.")
+
+    staff_rows = fetch_all(
+        """
+        SELECT authorized_users.registry, authorized_users.role,
+               authorized_users.full_name, authorized_users.email,
+               authorized_users.teacher_type, authorized_users.active,
+               classrooms.name AS classroom
+        FROM authorized_users
+        LEFT JOIN classrooms ON classrooms.id = authorized_users.classroom_id
+        WHERE authorized_users.role IN ('Professor', 'Monitor')
+        ORDER BY authorized_users.active DESC, authorized_users.full_name,
+                 authorized_users.registry
+        """
+    )
+    st.markdown("#### Equipe cadastrada")
+    st.dataframe(
+        [
+            {
+                "Matrícula": row["registry"],
+                "Nome": row["full_name"] or "Nome não informado",
+                "Cargo": staff_label(row),
+                "Turma": row["classroom"] or "Sem turma específica",
+                "E-mail": row["email"] or "Não informado",
+                "Situação": "Ativo" if row["active"] else "Arquivado",
+            }
+            for row in staff_rows
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def render_admin_panel() -> None:
+    st.subheader("Painel de Controle")
+    st.caption("Cadastros disponíveis somente para a matrícula administrativa.")
+    render_absence_alerts()
+    st.divider()
+    students_tab, staff_tab = st.tabs(["Gerenciar alunos", "Gerenciar equipe"])
+    with students_tab:
+        render_admin_student_management()
+    with staff_tab:
+        render_admin_staff_management()
 
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
@@ -1763,6 +2616,7 @@ if teacher:
     else:
         teacher["teacher_type"] = account["teacher_type"]
         teacher["role"] = account["role"]
+        teacher["classroom_id"] = account["classroom_id"]
         if account["role"] == "Administrador":
             teacher["name"] = account["full_name"] or "Administrador"
             if account["email"]:
@@ -1785,12 +2639,30 @@ admin_pages = [
     "📅 Calendário de Avaliações",
     "📢 Quadro de Avisos",
     "🧩 Relatório de Inclusão AEE",
+    MONITOR_PAGE,
 ]
-pages = admin_pages if teacher["role"] == "Administrador" else PEDAGOGICAL_PAGES
+if teacher["role"] == "Administrador":
+    pages = admin_pages
+elif teacher["role"] == "Monitor":
+    pages = [MONITOR_PAGE]
+elif teacher.get("teacher_type") == "AEE":
+    pages = [
+        "📋 Chamada Diária",
+        "🧒 Carômetro e Histórico de Alunos",
+        "📝 Planejamentos & Atas de Conselho",
+        "🏢 Agendamento de Espaços",
+    ]
+else:
+    pages = PEDAGOGICAL_PAGES
 
 with st.sidebar:
     st.title("Portal Digital")
-    st.subheader(teacher["role"])
+    role_label = (
+        f"Professor {'AEE' if teacher.get('teacher_type') == 'AEE' else 'Regular'}"
+        if teacher["role"] == "Professor"
+        else teacher["role"]
+    )
+    st.subheader(role_label)
     st.write(teacher["name"])
     st.caption(f"Matrícula: {teacher['registry']}")
     if teacher["email"]:
@@ -1821,9 +2693,15 @@ elif selected_page == "🧒 Carômetro e Histórico de Alunos":
     render_student_directory(teacher)
 elif selected_page == "🏢 Agendamento de Espaços":
     render_space_booking(teacher)
+elif selected_page == "🚨 Ocorrências da Rotina":
+    render_occurrences(teacher, admin_view=teacher["role"] == "Administrador")
+elif selected_page == "📝 Relatório Descritivo":
+    render_development_reports(teacher, admin_view=teacher["role"] == "Administrador")
 elif selected_page == "📢 Quadro de Avisos":
     if teacher["role"] == "Administrador":
         render_announcements()
 elif selected_page == "🧩 Relatório de Inclusão AEE":
     if teacher["role"] == "Administrador":
         render_aee_reports(teacher)
+elif selected_page == MONITOR_PAGE:
+    render_student_safety()

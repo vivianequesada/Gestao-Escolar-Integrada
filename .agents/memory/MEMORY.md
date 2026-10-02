@@ -1,2 +1,3 @@
 - [Streamlit preview routing](streamlit-preview-routing.md) — A root page can return HTTP 200 while Streamlit remains stuck unless its WebSocket path is routed.
 - [Python Gmail connector](python-gmail-connector.md) — If the Python SDK is unavailable in the package registry, use the installed Replit JavaScript connector SDK from app code.
+- [School data preservation](school-data-preservation.md) — Keep SQLite as the source of truth; migrations must preserve records and archive entities with linked history.
