@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Iterator
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -62,6 +61,22 @@ AREAS_PEDAGOGICAS = (
     "Artes",
     "Cultura, corpo e movimento",
 )
+MESES_DO_ANO = (
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+)
+QUINZENAS = ("1ª Quinzena", "2ª Quinzena")
+TRIMESTRES = ("1º Trimestre", "2º Trimestre", "3º Trimestre")
 
 # O SDK oficial de conectores está instalado no workspace JavaScript. O processo
 # auxiliar recebe somente os dados desta mensagem via stdin; credenciais não são
@@ -226,7 +241,9 @@ def initialize_database() -> None:
                 record_date TEXT NOT NULL,
                 classroom_id INTEGER REFERENCES classrooms(id),
                 student_id INTEGER REFERENCES students(id),
+                month_name TEXT NOT NULL DEFAULT '',
                 quinzena TEXT NOT NULL DEFAULT '',
+                trimester TEXT NOT NULL DEFAULT '',
                 subject TEXT NOT NULL,
                 title TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -267,7 +284,9 @@ def initialize_database() -> None:
             },
             "plans_minutes": {
                 "student_id": "INTEGER REFERENCES students(id)",
+                "month_name": "TEXT NOT NULL DEFAULT ''",
                 "quinzena": "TEXT NOT NULL DEFAULT ''",
+                "trimester": "TEXT NOT NULL DEFAULT ''",
             },
         }
         for table, columns in migrations.items():
@@ -395,6 +414,19 @@ def add_authorized_teacher(name: str, registry: str, email: str, teacher_type: s
                 teacher_type,
                 datetime.now().isoformat(timespec="minutes"),
             ),
+        )
+
+
+def complete_teacher_profile(registry: str, name: str, email: str) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE authorized_users
+            SET full_name = CASE WHEN full_name = '' THEN ? ELSE full_name END,
+                email = CASE WHEN email = '' THEN ? ELSE email END
+            WHERE registry = ? AND role = 'Professor'
+            """,
+            (name.strip(), email.strip().lower(), registry.strip().lower()),
         )
 
 
@@ -582,19 +614,27 @@ def save_plan_or_minutes(
     title: str,
     content: str,
     teacher: dict[str, str],
-) -> None:
+    month_name: str = "",
+    quinzena: str = "",
+    trimester: str = "",
+    student_id: int | None = None,
+) -> int:
     with connection_scope() as connection:
-        connection.execute(
+        cursor = connection.execute(
             """
             INSERT INTO plans_minutes
-                (record_type, record_date, classroom_id, subject, title, content,
-                 teacher_name, teacher_registry, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (record_type, record_date, classroom_id, student_id, month_name, quinzena,
+                 trimester, subject, title, content, teacher_name, teacher_registry, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record_type,
                 record_date.isoformat(),
                 classroom_id,
+                student_id,
+                month_name,
+                quinzena,
+                trimester,
                 subject.strip(),
                 title.strip(),
                 content.strip(),
@@ -603,6 +643,7 @@ def save_plan_or_minutes(
                 datetime.now().isoformat(timespec="minutes"),
             ),
         )
+        return int(cursor.lastrowid)
 
 
 def save_student_history(
@@ -746,6 +787,7 @@ def render_login() -> None:
             elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", resolved_email):
                 st.error("Informe um endereço de e-mail válido.")
             else:
+                complete_teacher_profile(account["registry"], resolved_name, resolved_email)
                 st.session_state["teacher_profile"] = {
                     "name": resolved_name,
                     "registry": account["registry"],
@@ -908,51 +950,407 @@ def render_assessment_calendar(teacher: dict[str, str]) -> None:
         st.rerun()
 
 
+def decode_plan_content(content: str) -> dict:
+    try:
+        decoded = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        return {"legacy_text": content}
+    return decoded if isinstance(decoded, dict) else {"legacy_text": content}
+
+
+def registered_teacher_rows() -> list[sqlite3.Row]:
+    return fetch_all(
+        """
+        SELECT registry, full_name
+        FROM authorized_users
+        WHERE role = 'Professor' AND active = 1
+        ORDER BY full_name COLLATE NOCASE, registry
+        """
+    )
+
+
+def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> str:
+    payload = decode_plan_content(row["content"])
+    subject_reports = payload.get("subject_reports", {})
+    if not isinstance(subject_reports, dict):
+        subject_reports = {}
+
+    subject_sections = "".join(
+        "<section class='subject-report'>"
+        f"<h3>{html.escape(area)}</h3>"
+        f"<div>{html.escape(str(subject_reports.get(area, ''))).replace(chr(10), '<br>') or '—'}</div>"
+        "</section>"
+        for area in AREAS_PEDAGOGICAS
+    )
+    legacy_text = payload.get("legacy_text", "")
+    if legacy_text and not payload.get("subject_reports"):
+        subject_sections = (
+            "<section class='subject-report legacy-report'>"
+            f"<div>{html.escape(str(legacy_text)).replace(chr(10), '<br>')}</div>"
+            "</section>"
+        )
+
+    aee_report = str(payload.get("aee_report", "")).strip()
+    signatures = []
+    for row_teacher in teachers:
+        full_name = (row_teacher["full_name"] or "").strip()
+        label = (
+            f"Prof. {full_name}"
+            if full_name
+            else f"Professor(a) — matrícula {row_teacher['registry']}"
+        )
+        signatures.append(
+            "<div class='signature-block'>"
+            "<div class='signature-line'></div>"
+            f"<div class='signature-name'>{html.escape(label)}</div>"
+            "</div>"
+        )
+    signatures_html = "".join(signatures) or (
+        "<p class='no-signatures'>Nenhum professor está cadastrado para assinatura.</p>"
+    )
+    trimester = row["trimester"] or payload.get("trimestre", "")
+    trimester_html = (
+        f"<span><strong>Trimestre:</strong> {html.escape(trimester)}</span>"
+        if trimester
+        else ""
+    )
+    author = html.escape(row["teacher_name"] or "Equipe pedagógica")
+    classroom = html.escape(row["classroom"] or "Turma não informada")
+    title = html.escape(row["title"])
+    record_date = html.escape(format_date(row["record_date"]))
+    aee_html = (
+        html.escape(aee_report).replace("\n", "<br>")
+        if aee_report
+        else "Sem registro de AEE informado para este conselho."
+    )
+
+    return f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; color: #202124; font-family: Arial, sans-serif; line-height: 1.5; }}
+.page {{ max-width: 900px; margin: 0 auto; padding: 24px; }}
+.toolbar {{ display: flex; justify-content: flex-end; margin-bottom: 18px; }}
+.toolbar button {{ border: 0; border-radius: 6px; background: #1769aa; color: #fff; padding: 11px 16px; font-size: 15px; }}
+.school-header {{ text-align: center; border-bottom: 1px solid #777; padding-bottom: 14px; margin-bottom: 18px; }}
+.school-header h1 {{ font-size: 20px; margin: 0 0 4px; }}
+.school-header p {{ margin: 0; }}
+h2 {{ font-size: 20px; margin: 18px 0 8px; }}
+h3 {{ font-size: 15px; margin: 14px 0 4px; }}
+.metadata {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; margin: 14px 0 20px; }}
+.subject-report {{ margin: 12px 0; break-inside: avoid; page-break-inside: avoid; }}
+.subject-report div, .aee-report {{ white-space: normal; }}
+.aee-report {{ border-top: 1px solid #aaa; margin-top: 18px; padding-top: 12px; }}
+.signature-heading {{ margin-top: 32px; }}
+.signature-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 24px; margin-top: 22px; }}
+.signature-block {{ min-width: 0; text-align: center; break-inside: avoid; page-break-inside: avoid; }}
+.signature-line {{ height: 30px; border-bottom: 1px dotted #333; }}
+.signature-name {{ margin-top: 7px; overflow-wrap: anywhere; }}
+.no-signatures {{ grid-column: 1 / -1; }}
+@media screen and (max-width: 600px) {{
+  .page {{ padding: 14px; }}
+  .metadata, .signature-grid {{ grid-template-columns: 1fr; }}
+}}
+@media print {{
+  @page {{ size: A4; margin: 16mm; }}
+  body {{ font-size: 11pt; }}
+  .page {{ max-width: none; padding: 0; }}
+  .toolbar {{ display: none !important; }}
+  .signature-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px 20px; }}
+  .signature-block {{ break-inside: avoid; page-break-inside: avoid; }}
+}}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="toolbar"><button type="button" onclick="window.print()">Imprimir / Salvar em PDF</button></div>
+  <header class="school-header">
+    <h1>CI Prefeito Ary Levy Pereira</h1>
+    <p>Ata de Conselho</p>
+  </header>
+  <h2>{title}</h2>
+  <div class="metadata">
+    <span><strong>Turma:</strong> {classroom}</span>
+    <span><strong>Data:</strong> {record_date}</span>
+    {trimester_html}
+    <span><strong>Responsável pelo registro:</strong> {author}</span>
+  </div>
+  <section>{subject_sections}</section>
+  <section class="aee-report">
+    <h3>Relatório do AEE da turma</h3>
+    <div>{aee_html}</div>
+  </section>
+  <h2 class="signature-heading">Assinaturas dos professores</h2>
+  <div class="signature-grid">{signatures_html}</div>
+</main>
+</body>
+</html>"""
+
+
 def render_plans_minutes(teacher: dict[str, str]) -> None:
     st.subheader("Planejamentos & Atas de Conselho")
     rooms = classroom_rows()
-    room_choices = ["Sem sala específica"] + [row["name"] for row in rooms]
-    with st.form("plans_minutes_form", clear_on_submit=True):
-        record_type = st.selectbox("Tipo de registro", ["Planejamento", "Ata de Conselho"])
-        title = st.text_input("Título", max_chars=160)
-        col1, col2, col3 = st.columns(3)
-        record_date = col1.date_input("Data", value=date.today())
-        room_name = col2.selectbox("Sala de aula", room_choices)
-        subject = col3.text_input("Componente ou pauta")
-        content = st.text_area("Conteúdo / decisões / próximos passos", height=180)
-        submitted = st.form_submit_button("Salvar registro", type="primary")
-    if submitted:
-        if not title.strip() or not content.strip():
-            st.error("Preencha o título e o conteúdo do registro.")
-        else:
-            classroom_id = None
-            if room_name != "Sem sala específica":
-                classroom_id = next(row["id"] for row in rooms if row["name"] == room_name)
-            save_plan_or_minutes(record_type, record_date, classroom_id, subject, title, content, teacher)
-            st.success(f"{record_type} salvo.")
+    room_names = [row["name"] for row in rooms]
+    room_ids = {row["name"]: row["id"] for row in rooms}
+    teacher_type = teacher.get("teacher_type", "Regular")
+    is_admin = teacher.get("role") == "Administrador"
+
+    tab_names = []
+    if is_admin or teacher_type != "AEE":
+        tab_names.append("Planejamento Quinzenal")
+    if is_admin or teacher_type == "AEE":
+        tab_names.append("Planejamento Individualizado AEE")
+    tab_names.append("Ata de Conselho")
+    tabs_by_name = dict(zip(tab_names, st.tabs(tab_names)))
+
+    if "Planejamento Quinzenal" in tabs_by_name:
+        with tabs_by_name["Planejamento Quinzenal"]:
+            st.caption("Preencha os objetivos e as atividades das seis áreas para a turma.")
+            with st.form("regular_quinzena_form", clear_on_submit=True):
+                col1, col2, col3 = st.columns(3)
+                month_name = col1.selectbox("Mês do ano", MESES_DO_ANO, key="regular_plan_month")
+                quinzena = col2.selectbox("Quinzena", QUINZENAS, key="regular_plan_quinzena")
+                record_date = col3.date_input("Data do registro", value=date.today(), key="regular_plan_date")
+                room_name = st.selectbox("Turma", room_names, key="regular_plan_room")
+                activities = {
+                    area: st.text_area(
+                        f"{area} — objetivos e atividades",
+                        height=90,
+                        key=f"regular_plan_area_{index}",
+                    )
+                    for index, area in enumerate(AREAS_PEDAGOGICAS)
+                }
+                submitted = st.form_submit_button("Salvar Planejamento Quinzenal", type="primary")
+            if submitted:
+                missing_areas = [
+                    area for area, text in activities.items() if not text.strip()
+                ]
+                if missing_areas:
+                    st.error("Preencha as seis áreas. Faltam: " + ", ".join(missing_areas))
+                else:
+                    record_id = save_plan_or_minutes(
+                        "Planejamento Quinzenal",
+                        record_date,
+                        room_ids[room_name],
+                        "Planejamento por áreas",
+                        f"Planejamento Quinzenal — {month_name} — {quinzena}",
+                        json.dumps({"activities": activities}, ensure_ascii=False),
+                        teacher,
+                        month_name=month_name,
+                        quinzena=quinzena,
+                    )
+                    st.success("Planejamento Quinzenal salvo.")
+
+    if "Planejamento Individualizado AEE" in tabs_by_name:
+        with tabs_by_name["Planejamento Individualizado AEE"]:
+            students = fetch_all(
+                """
+                SELECT students.id, students.code, students.name, students.classroom_id,
+                       classrooms.name AS classroom
+                FROM students JOIN classrooms ON classrooms.id = students.classroom_id
+                WHERE classrooms.name IN ({})
+                ORDER BY students.name, students.code
+                """.format(",".join("?" for _ in SALAS_CADASTRADAS)),
+                SALAS_CADASTRADAS,
+            )
+            if not students:
+                st.info("Cadastre ao menos um aluno antes de criar um planejamento AEE.")
+            else:
+                student_options = {
+                    f"{student['name']} · {student['classroom']} · {student['code']}": student["id"]
+                    for student in students
+                }
+                students_by_id = {student["id"]: student for student in students}
+                with st.form("aee_individual_plan_form", clear_on_submit=True):
+                    student_label = st.selectbox(
+                        "Aluno",
+                        list(student_options),
+                        key="aee_plan_student",
+                    )
+                    col1, col2, col3 = st.columns(3)
+                    month_name = col1.selectbox("Mês do ano", MESES_DO_ANO, key="aee_plan_month")
+                    quinzena = col2.selectbox("Quinzena", QUINZENAS, key="aee_plan_quinzena")
+                    record_date = col3.date_input("Data do registro", value=date.today(), key="aee_plan_date")
+                    adapted_plan = st.text_area(
+                        "Plano adaptado para este aluno",
+                        height=180,
+                        key="aee_adapted_plan",
+                    )
+                    submitted = st.form_submit_button(
+                        "Salvar Planejamento Individualizado AEE",
+                        type="primary",
+                    )
+                if submitted:
+                    if not adapted_plan.strip():
+                        st.error("Preencha o plano adaptado para o aluno.")
+                    else:
+                        student = students_by_id[student_options[student_label]]
+                        record_id = save_plan_or_minutes(
+                            "Planejamento Individualizado AEE",
+                            record_date,
+                            student["classroom_id"],
+                            "AEE",
+                            (
+                                f"Planejamento Individualizado AEE — {student['name']} — "
+                                f"{month_name} — {quinzena}"
+                            ),
+                            json.dumps(
+                                {
+                                    "student_name": student["name"],
+                                    "student_code": student["code"],
+                                    "adapted_plan": adapted_plan.strip(),
+                                },
+                                ensure_ascii=False,
+                            ),
+                            teacher,
+                            month_name=month_name,
+                            quinzena=quinzena,
+                            student_id=student["id"],
+                        )
+                        st.success("Planejamento Individualizado AEE salvo.")
+
+    with tabs_by_name["Ata de Conselho"]:
+        st.caption("Registre o desempenho da turma nas seis áreas e o relatório do AEE.")
+        with st.form("council_minutes_form", clear_on_submit=True):
+            title = st.text_input("Título da ata", value="Ata de Conselho", max_chars=160)
+            col1, col2, col3 = st.columns(3)
+            record_date = col1.date_input("Data da reunião", value=date.today(), key="minutes_date")
+            room_name = col2.selectbox("Turma", room_names, key="minutes_room")
+            trimester = col3.selectbox("Trimestre", TRIMESTRES, key="minutes_trimester")
+            subject_reports = {
+                area: st.text_area(
+                    f"Desempenho — {area}",
+                    height=90,
+                    key=f"minutes_area_{index}",
+                )
+                for index, area in enumerate(AREAS_PEDAGOGICAS)
+            }
+            aee_report = st.text_area(
+                "Relatório do AEE da turma (opcional quando não se aplicar)",
+                height=120,
+                key="minutes_aee_report",
+            )
+            submitted = st.form_submit_button("Salvar Ata de Conselho", type="primary")
+        if submitted:
+            missing_areas = [
+                area for area, text in subject_reports.items() if not text.strip()
+            ]
+            if not title.strip():
+                st.error("Informe o título da ata.")
+            elif missing_areas:
+                st.error("Preencha o desempenho das seis áreas. Faltam: " + ", ".join(missing_areas))
+            else:
+                record_id = save_plan_or_minutes(
+                    "Ata de Conselho",
+                    record_date,
+                    room_ids[room_name],
+                    "Desempenho e acompanhamento da turma",
+                    title,
+                    json.dumps(
+                        {
+                            "subject_reports": subject_reports,
+                            "aee_report": aee_report.strip(),
+                            "trimestre": trimester,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    teacher,
+                    trimester=trimester,
+                )
+                st.session_state["minutes_preview_id"] = record_id
+                st.success("Ata salva. A visualização para impressão está disponível abaixo.")
 
     rows = fetch_all(
         """
         SELECT plans_minutes.id, plans_minutes.record_type, plans_minutes.record_date,
-               plans_minutes.subject, plans_minutes.title, plans_minutes.content,
-               plans_minutes.teacher_name, classrooms.name AS classroom
+               plans_minutes.classroom_id, plans_minutes.student_id, plans_minutes.month_name,
+               plans_minutes.quinzena, plans_minutes.trimester, plans_minutes.subject,
+               plans_minutes.title, plans_minutes.content, plans_minutes.teacher_name,
+               classrooms.name AS classroom, students.name AS student_name,
+               students.code AS student_code
         FROM plans_minutes
         LEFT JOIN classrooms ON classrooms.id = plans_minutes.classroom_id
+        LEFT JOIN students ON students.id = plans_minutes.student_id
         ORDER BY plans_minutes.record_date DESC, plans_minutes.id DESC
         """
     )
     st.divider()
     if not rows:
         st.info("Nenhum planejamento ou ata cadastrado.")
+        st.session_state.pop("minutes_preview_id", None)
         return
+
+    rows_by_id = {row["id"]: row for row in rows}
+    preview_id = st.session_state.get("minutes_preview_id")
+    if preview_id not in rows_by_id:
+        st.session_state.pop("minutes_preview_id", None)
+        preview_id = None
+
+    st.markdown("#### Registros salvos")
     for row in rows:
+        payload = decode_plan_content(row["content"])
         room_label = row["classroom"] or "Sem sala específica"
-        with st.expander(f"{row['record_type']} · {format_date(row['record_date'])} · {row['title']}"):
-            st.caption(f"{room_label} · {row['subject'] or 'Sem componente/pauta'} · {row['teacher_name']}")
-            st.write(row["content"])
+        expander_title = (
+            f"{row['record_type']} · {format_date(row['record_date'])} · {row['title']}"
+        )
+        with st.expander(expander_title):
+            details = [room_label]
+            if row["month_name"]:
+                details.append(row["month_name"])
+            if row["quinzena"]:
+                details.append(row["quinzena"])
+            if row["trimester"]:
+                details.append(row["trimester"])
+            if row["student_name"]:
+                details.append(f"Aluno: {row['student_name']} · {row['student_code']}")
+            details.append(row["teacher_name"])
+            st.caption(" · ".join(details))
+
+            if row["record_type"] == "Planejamento Quinzenal":
+                activities = payload.get("activities", {})
+                for area in AREAS_PEDAGOGICAS:
+                    st.markdown(f"**{area}**")
+                    st.write(activities.get(area, ""))
+            elif row["record_type"] == "Planejamento Individualizado AEE":
+                st.markdown("**Plano adaptado**")
+                st.write(payload.get("adapted_plan", payload.get("legacy_text", "")))
+            elif row["record_type"] == "Ata de Conselho":
+                reports = payload.get("subject_reports", {})
+                if isinstance(reports, dict):
+                    for area in AREAS_PEDAGOGICAS:
+                        st.markdown(f"**{area}**")
+                        st.write(reports.get(area, ""))
+                    st.markdown("**Relatório do AEE da turma**")
+                    st.write(payload.get("aee_report", ""))
+                else:
+                    st.write(payload.get("legacy_text", row["content"]))
+                if st.button("Visualizar / imprimir Ata", key=f"preview_minutes_{row['id']}"):
+                    st.session_state["minutes_preview_id"] = row["id"]
+                    st.rerun()
+            else:
+                st.write(payload.get("legacy_text", row["content"]))
+
             if st.button("Excluir registro", key=f"delete_plan_{row['id']}"):
                 delete_record("plans_minutes", row["id"])
+                st.session_state.pop("minutes_preview_id", None)
                 st.rerun()
+
+    preview_row = rows_by_id.get(st.session_state.get("minutes_preview_id"))
+    if preview_row and preview_row["record_type"] == "Ata de Conselho":
+        st.divider()
+        st.subheader("Visualização pronta para impressão")
+        st.caption("Use “Imprimir / Salvar em PDF” na visualização; as assinaturas são atualizadas com o cadastro de professores.")
+        st.iframe(
+            build_minutes_print_html(preview_row, registered_teacher_rows()),
+            height=1250,
+        )
+        if st.button("Fechar visualização da ata", key="close_minutes_preview"):
+            st.session_state.pop("minutes_preview_id", None)
+            st.rerun()
 
 
 def render_student_directory(teacher: dict[str, str]) -> None:
@@ -1307,10 +1705,15 @@ def render_admin_panel() -> None:
             teacher_name = st.text_input("Nome completo do professor")
             teacher_registry = st.text_input("Matrícula permitida")
             teacher_email = st.text_input("E-mail institucional")
+            teacher_type_label = st.selectbox(
+                "Cargo do profissional",
+                ["Professor Regular", "Professor AEE"],
+            )
             submitted = st.form_submit_button("Cadastrar professor", type="primary")
         if submitted:
             registry = teacher_registry.strip().lower()
             email = teacher_email.strip().lower()
+            teacher_type = "AEE" if teacher_type_label == "Professor AEE" else "Regular"
             if not teacher_name.strip() or not registry or not email:
                 st.error("Preencha o nome, a matrícula e o e-mail.")
             elif registry == "adm123":
@@ -1319,14 +1722,14 @@ def render_admin_panel() -> None:
                 st.error("Informe um endereço de e-mail válido.")
             else:
                 try:
-                    add_authorized_teacher(teacher_name, registry, email)
+                    add_authorized_teacher(teacher_name, registry, email, teacher_type)
                     st.success("Professor cadastrado e autorizado a entrar.")
                 except sqlite3.IntegrityError:
                     st.error("Essa matrícula já está cadastrada.")
 
         teacher_rows = fetch_all(
             """
-            SELECT registry, full_name, email
+            SELECT registry, full_name, email, teacher_type
             FROM authorized_users
             WHERE role = 'Professor' AND active = 1
             ORDER BY full_name, registry
@@ -1339,6 +1742,7 @@ def render_admin_panel() -> None:
                     "Matrícula": row["registry"],
                     "Professor": row["full_name"] or "Nome informado no acesso",
                     "E-mail": row["email"] or "Informado no acesso",
+                    "Cargo": "Professor AEE" if row["teacher_type"] == "AEE" else "Professor Regular",
                 }
                 for row in teacher_rows
             ],
@@ -1357,6 +1761,7 @@ if teacher:
         st.session_state.pop("teacher_profile", None)
         teacher = None
     else:
+        teacher["teacher_type"] = account["teacher_type"]
         teacher["role"] = account["role"]
         if account["role"] == "Administrador":
             teacher["name"] = account["full_name"] or "Administrador"
