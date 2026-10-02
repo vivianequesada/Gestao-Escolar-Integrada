@@ -16,7 +16,7 @@ import streamlit as st
 # 1. CONFIGURAÇÕES E DIRETÓRIOS GLOBAIS
 # =====================================================================
 APP_DIR = Path(__file__).resolve().parent
-DB_PATH = APP_DIR / "gestao_escolar.db"
+DB_PATH = APP_DIR / "gestao_escolar_v2.db"
 APP_TITLE = "🏫 Portal Digital - CI Prefeito Ary Levy Pereira"
 UPLOAD_DIR = APP_DIR / "documentos_pdf"
 
@@ -694,29 +694,28 @@ else:
         st.rerun()
         
     st.sidebar.divider()
-    
-    # 🚨 REGRA CRÍTICA DE EVASÃO: ALERTA VERMELHO DE BUSCA ATIVA PARA A DIREÇÃO
+      # 🚨 REGRA CRÍTICA DE EVASÃO: ALERTA VERMELHO DE BUSCA ATIVA PARA A DIREÇÃO
     st.subheader("🚨 Central Escolar de Alertas Críticos (Evasão)")
     evasao_rows = fetch_all(
         """
-        SELECT students.name, students.classroom_id, students.faltas_consecutivas, students.emergency_contact, classrooms.name AS classroom 
+        SELECT students.name, students.classroom_id, students.faltas_consecutivas, students.emergency_contact
         FROM students 
-        JOIN classrooms ON classrooms.id = students.classroom_id 
-        WHERE students.faltas_consecutivas >= 3 AND students.active = 1
+        WHERE students.faltas_consecutivas >= 3
         """
     )
     if evasao_rows:
         for ev in evasao_rows:
-            st.error(f"⚠️ **RISCO DE EVASÃO DETECTADO:** A criança **{ev['name']}** da turma **{ev['classroom']}** faltou {ev['faltas_consecutivas']} dias seguidos! Telefone de contato dos pais para busca ativa imediata: {ev['emergency_contact']}")
+            st.error(f"⚠️ **RISCO DE EVASÃO DETECTADO:** A criança **{ev['name']}** acumulou {ev['faltas_consecutivas']} faltas consecutivas! Telefone de contato dos pais para busca ativa imediata: {ev['emergency_contact']}")
     else:
         st.success("✅ Nenhuma evasão detectada nas salas de Educação Infantil.")
     st.divider()
+  
 
     # Roteamento administrativo ou pedagógico com base no cargo autenticado
     if prof["role"] == "Administrador":
         menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + PEDAGOGICAL_PAGES)
         if menu_escolha == ADMIN_PAGE: render_admin_dashboard()
-        elif menu_escolha == "📢 Quadro de Avisos": render_announcements()
+        elif menu_escolha == "📢 Quadro de Aviso": render_announcements()
         elif menu_escolha == "📋 Chamada Diária": render_daily_attendance(prof)
         elif menu_escolha == "📝 Planejamentos & Atas de Conselho": render_minutes_and_plans(prof)
         elif menu_escolha == "📅 Calendário de Avaliações": render_assessment_calendar(prof)
