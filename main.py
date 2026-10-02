@@ -654,3 +654,106 @@ def add_reservation(
             """,
             (space, reservation_date.isoformat(), end_text, start_text),
         ).fetchone()
+        conflict = connection.execute(
+            """
+            SELECT start_time, end_time
+            FROM reservations
+            WHERE space = ? AND reservation_date = ?
+              AND start_time < ? AND end_time > ?
+            LIMIT 1
+            """ or "",
+            (space, reservation_date.isoformat(), end_text, start_text),
+        ).fetchone()
+        
+        if conflict:
+            return False, f"Esse horário já está reservado ({conflict['start_time']}–{conflict['end_time']})."
+            
+        connection.execute(
+            """
+            INSERT INTO reservations
+                (space, responsible, teacher_name, teacher_registry, teacher_email,
+                 group_name, reservation_date, start_time, end_time, purpose, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                space,
+                teacher["name"],
+                teacher["name"],
+                teacher["registry"],
+                teacher["email"],
+                group_name.strip(),
+                reservation_date.isoformat(),
+                start_text,
+                end_text,
+                purpose.strip(),
+                datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+    return True, "Agendamento registrado."
+
+
+def add_aee_report(
+    student_ref: str,
+    grade: str,
+    period: str,
+    goals: str,
+    supports: str,
+    progress: str,
+    status: str,
+    teacher: dict[str, str],
+) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO aee_reports
+                (student_ref, grade, period, goals, supports, progress, status, created_at,
+                 teacher_name, teacher_registry, teacher_email)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                student_ref.strip(),
+                grade.strip(),
+                period.strip(),
+                goals.strip(),
+                supports.strip(),
+                progress.strip(),
+                status,
+                datetime.now().isoformat(timespec="minutes"),
+                teacher["name"],
+                teacher["registry"],
+                teacher["email"],
+            ),
+        )
+
+
+def save_attendance(
+    student_statuses: dict[int, str],
+    attendance_date: date,
+    teacher: dict[str, str],
+) -> None:
+    now = datetime.now().isoformat(timespec="minutes")
+    with connection_scope() as connection:
+        for student_id, status in student_statuses.items():
+            connection.execute(
+                """
+                INSERT INTO attendance
+                    (student_id, attendance_date, status, teacher_name, teacher_registry,
+                     teacher_email, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(student_id, attendance_date) DO UPDATE SET
+                    status = excluded.status,
+                    teacher_name = excluded.teacher_name,
+                    teacher_registry = excluded.teacher_registry,
+                    teacher_email = excluded.teacher_email,
+                    created_at = excluded.created_at
+                """,
+                (
+                    student_id,
+                    attendance_date.isoformat(),
+                    status,
+                    teacher["name"],
+                    teacher["registry"],
+                    teacher["email"],
+                    now,
+                ),
+            )
