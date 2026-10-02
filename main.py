@@ -2708,7 +2708,7 @@ elif selected_page == MONITOR_PAGE:
         # =====================================================================
     # PERFIL: ADMINISTRADOR (Painel Geral da Direção + CRUD Completo)
     # =====================================================================
-    elif usuario['cargo'] == "Administrador":
+elif usuario['cargo'] == "Administrador":
         st.header("⚙️ Painel de Controle da Direção e Coordenação")
         
         # 1. Alertas Críticos de Faltas
