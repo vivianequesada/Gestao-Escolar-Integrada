@@ -454,3 +454,203 @@ def get_authorized_user(registry: str) -> sqlite3.Row | None:
         "FROM authorized_users WHERE registry = ?",
         (registry.strip().lower(),),
     )
+def add_student(
+    name: str,
+    classroom_id: int,
+    code: str = "",
+    *,
+    allergies: str = "",
+    food_restrictions: str = "",
+    authorized_pickup: str = "",
+    emergency_contact: str = "",
+    avatar: str = "👶",
+) -> str:
+    with connection_scope() as connection:
+        if not code.strip():
+            next_id = connection.execute(
+                "SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM students"
+            ).fetchone()["next_id"]
+            code = f"ALU-{next_id:03d}"
+        connection.execute(
+            """
+            INSERT INTO students
+                (code, name, classroom_id, allergies, food_restrictions,
+                 authorized_pickup, emergency_contact, avatar)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                code.strip().upper(),
+                name.strip(),
+                classroom_id,
+                allergies.strip(),
+                food_restrictions.strip(),
+                authorized_pickup.strip(),
+                emergency_contact.strip(),
+                avatar.strip() or "👶",
+            ),
+        )
+    return code.strip().upper()
+
+
+def update_student(
+    student_id: int,
+    name: str,
+    classroom_id: int,
+    allergies: str,
+    food_restrictions: str,
+    authorized_pickup: str,
+    emergency_contact: str,
+    avatar: str,
+    active: bool,
+) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE students
+            SET name = ?, classroom_id = ?, allergies = ?, food_restrictions = ?,
+                authorized_pickup = ?, emergency_contact = ?, avatar = ?, active = ?
+            WHERE id = ?
+            """,
+            (
+                name.strip(),
+                classroom_id,
+                allergies.strip(),
+                food_restrictions.strip(),
+                authorized_pickup.strip(),
+                emergency_contact.strip(),
+                avatar.strip() or "👶",
+                int(active),
+                student_id,
+            ),
+        )
+
+
+def add_authorized_teacher(
+    name: str,
+    registry: str,
+    email: str,
+    teacher_type: str,
+    role: str = "Professor",
+    classroom_id: int | None = None,
+) -> None:
+    if role not in ("Professor", "Monitor"):
+        raise ValueError("Cargo de funcionário inválido.")
+    if teacher_type not in ("Regular", "AEE"):
+        raise ValueError("Tipo de professor inválido.")
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO authorized_users
+                (registry, role, full_name, email, teacher_type, classroom_id, active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            """,
+            (
+                registry.strip().lower(),
+                role,
+                name.strip(),
+                email.strip().lower(),
+                teacher_type if role == "Professor" else "Regular",
+                classroom_id,
+                datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+def update_authorized_teacher(
+    registry: str,
+    name: str,
+    email: str,
+    role: str,
+    teacher_type: str,
+    classroom_id: int | None,
+    active: bool,
+) -> None:
+    if role not in ("Professor", "Monitor"):
+        raise ValueError("Cargo de funcionário inválido.")
+    if teacher_type not in ("Regular", "AEE"):
+        raise ValueError("Tipo de professor inválido.")
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE authorized_users
+            SET full_name = ?, email = ?, role = ?, teacher_type = ?,
+                classroom_id = ?, active = ?
+            WHERE registry = ? AND role != 'Administrador'
+            """,
+            (
+                name.strip(),
+                email.strip().lower(),
+                role,
+                teacher_type if role == "Professor" else "Regular",
+                classroom_id,
+                int(active),
+                registry.strip().lower(),
+            ),
+        )
+
+
+def complete_teacher_profile(registry: str, name: str, email: str) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE authorized_users
+            SET full_name = CASE WHEN full_name = '' THEN ? ELSE full_name END,
+                email = CASE WHEN email = '' THEN ? ELSE email END
+            WHERE registry = ? AND role IN ('Professor', 'Monitor')
+            """,
+            (name.strip(), email.strip().lower(), registry.strip().lower()),
+        )
+
+
+def students_in_classroom(classroom_id: int) -> list[sqlite3.Row]:
+    return fetch_all(
+        """
+        SELECT students.id, students.code, students.name, students.classroom_id,
+               students.allergies, students.food_restrictions, students.authorized_pickup,
+               students.emergency_contact, students.avatar, students.active,
+               classrooms.name AS classroom
+        FROM students JOIN classrooms ON classrooms.id = students.classroom_id
+        WHERE classrooms.id = ? AND students.active = 1
+        ORDER BY students.name
+        """,
+        (classroom_id,),
+    )
+
+
+def save_announcement(title: str, category: str, audience: str, body: str) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO announcements (title, category, audience, body, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                title.strip(),
+                category,
+                audience,
+                body.strip(),
+                datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+
+
+def add_reservation(
+    space: str,
+    teacher: dict[str, str],
+    group_name: str,
+    reservation_date: date,
+    start_time: time,
+    end_time: time,
+    purpose: str,
+) -> tuple[bool, str]:
+    start_text = start_time.strftime("%H:%M")
+    end_text = end_time.strftime("%H:%M")
+    with connection_scope() as connection:
+        conflict = connection.execute(
+            """
+            SELECT start_time, end_time
+            FROM reservations
+            WHERE space = ? AND reservation_date = ?
+              AND start_time < ? AND end_time > ?
+            LIMIT 1
+            """,
+            (space, reservation_date.isoformat(), end_text, start_text),
+        ).fetchone()
