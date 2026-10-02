@@ -757,3 +757,119 @@ def save_attendance(
                     now,
                 ),
             )
+            if status == "Presente":
+                connection.execute("UPDATE students SET faltas_consecutivas = 0 WHERE id = ?", (student_id,))
+            else:
+                connection.execute("UPDATE students SET faltas_consecutivas = faltas_consecutivas + 1 WHERE id = ?", (student_id,))
+
+
+def save_assessment(
+    title: str,
+    classroom_id: int,
+    subject: str,
+    assessment_type: str,
+    assessment_date: date,
+    notes: str,
+    teacher: dict[str, str],
+) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO assessments
+                (title, classroom_id, subject, assessment_type, assessment_date, notes,
+                 teacher_name, teacher_registry, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                title.strip(),
+                classroom_id,
+                subject.strip(),
+                assessment_type,
+                assessment_date.isoformat(),
+                notes.strip(),
+                teacher["name"],
+                teacher["registry"],
+                datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+
+
+def save_plan_or_minutes(
+    record_type: str,
+    record_date: date,
+    classroom_id: int | None,
+    subject: str,
+    title: str,
+    content: str,
+    teacher: dict[str, str],
+    month_name: str = "",
+    quinzena: str = "",
+    trimester: str = "",
+    student_id: int | None = None,
+) -> int:
+    with connection_scope() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO plans_minutes
+                (record_type, record_date, classroom_id, student_id, month_name, quinzena,
+                 trimester, subject, title, content, teacher_name, teacher_registry, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record_type,
+                record_date.isoformat(),
+                classroom_id,
+                student_id,
+                month_name,
+                quinzena,
+                trimester,
+                subject.strip(),
+                title.strip(),
+                content.strip(),
+                teacher["name"],
+                teacher["registry"],
+                datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+        return int(cursor.lastrowid)
+
+
+def save_student_history(
+    student_id: int,
+    record_type: str,
+    record_date: date,
+    summary: str,
+    action: str,
+    teacher: dict[str, str],
+) -> None:
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            INSERT INTO student_history
+                (student_id, record_type, record_date, summary, action, teacher_name,
+                 teacher_registry, teacher_email, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                student_id,
+                record_type,
+                record_date.isoformat(),
+                summary.strip(),
+                action.strip(),
+                teacher["name"],
+                teacher["registry"],
+                teacher["email"],
+                datetime.now().isoformat(timespec="minutes"),
+            ),
+        )
+
+
+def save_occurrence(
+    student_id: int,
+    occurrence_type: str,
+    severity: str,
+    details: str,
+    occurrence_date: date,
+    teacher: dict[str, str],
+) -> None:
+    with connection_scope() as connection:
