@@ -2839,13 +2839,13 @@ elif usuario['cargo'] == "Administrador":
                         st.error("Nenhum aluno foi localizado com esse ID ou Nome exato. Verifique os dados e tente novamente.")
 
         # HISTÓRICO DE OCORRÊNCIAS
+                # HISTÓRICO DE OCORRÊNCIAS
         with maba3:
             st.subheader("📋 Histórico Recente de Ocorrências")
             if st.session_state.get('ocorrencias_salvas'):
                 for oc in reversed(st.session_state.ocorrencias_salvas):
-                with st.expander(f"📌 {oc['tipo']} - {oc['aluno']}"):
-# Verifique se o seu código está alinhado exatamente degrau por degrau assim:
-for oc in reversed(st.session_state.ocorrencias_salvas):
-    with st.expander(f"📌 {oc['tipo']} - {oc['aluno']}"):
-        st.write(f"**Relator:** {oc['professor']} | **Gravidade:** {oc['gravidade']}") # <-- 4 ESPAÇOS A MAIS QUE O WITH
-        st.info(f"**Detalhes:** {oc['detalhes']}")                                   # <-- 4 ESPAÇOS A MAIS QUE O WITH
+                    with st.expander(f"📌 {oc['tipo']} - {oc['aluno']}"):
+                        st.write(f"**Relator:** {oc['professor']} | **Gravidade:** {oc['gravidade']}")
+                        st.info(f"**Detalhes:** {oc['detalhes']}")
+            else:
+                st.write("Nenhuma ocorrência registrada.")
