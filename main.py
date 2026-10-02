@@ -615,8 +615,15 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
         all_students = fetch_all("SELECT id, name, allergies, food_restrictions, authorized_pickup, emergency_contact, arquivos_pdf FROM students WHERE active = 1")
         if all_students:
             student_sel = st.selectbox("Selecione o Aluno para Consulta Completa:", [r["name"] for r in all_students])
-            aluno = next(r for r in all_students if r["name"] == student_sel)
+                        aluno_row = next(r for r in all_students if r["name"] == student_sel)
+            aluno = dict(aluno_row) # NOVO: Converte em dicionário seguro para evitar AttributeError
+            
             st.markdown(f"### Ficha de Saúde Global: {aluno['name']}")
+            st.write(f"🔴 **Alergias:** {aluno.get('allergies','Nenhuma')}")
+            st.write(f"🥛 **Restrições:** {aluno.get('food_restrictions','Nenhuma')}")
+            st.write(f"🪪 **Retirada:** {aluno.get('authorized_pickup','Não informado')}")
+            st.write(f"📞 **Contato de Emergência:** {aluno.get('emergency_contact','Não informado')}")
+
             st.write(f"🔴 **Alergias:** {aluno.get('allergies','Nenhuma')}")
             st.write(f"🥛 **Restrições:** {aluno.get('food_restrictions','Nenhuma')}")
             st.write(f"🪪 **Retirada:** {aluno.get('authorized_pickup','Não informado')}")
