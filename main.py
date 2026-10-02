@@ -2843,4 +2843,9 @@ elif usuario['cargo'] == "Administrador":
             st.subheader("📋 Histórico Recente de Ocorrências")
             if st.session_state.get('ocorrencias_salvas'):
                 for oc in reversed(st.session_state.ocorrencias_salvas):
-                    with st.expander(f"📌 {oc['tipo']} - {oc['aluno']}"):
+                with st.expander(f"📌 {oc['tipo']} - {oc['aluno']}"):
+# Verifique se o seu código está alinhado exatamente degrau por degrau assim:
+for oc in reversed(st.session_state.ocorrencias_salvas):
+    with st.expander(f"📌 {oc['tipo']} - {oc['aluno']}"):
+        st.write(f"**Relator:** {oc['professor']} | **Gravidade:** {oc['gravidade']}") # <-- 4 ESPAÇOS A MAIS QUE O WITH
+        st.info(f"**Detalhes:** {oc['detalhes']}")                                   # <-- 4 ESPAÇOS A MAIS QUE O WITH
