@@ -2705,3 +2705,142 @@ elif selected_page == "🧩 Relatório de Inclusão AEE":
         render_aee_reports(teacher)
 elif selected_page == MONITOR_PAGE:
     render_student_safety()
+        # =====================================================================
+    # PERFIL: ADMINISTRADOR (Painel Geral da Direção + CRUD Completo)
+    # =====================================================================
+    elif usuario['cargo'] == "Administrador":
+        st.header("⚙️ Painel de Controle da Direção e Coordenação")
+        
+        # 1. Alertas Críticos de Faltas
+        st.subheader("🚨 Central de Alertas Críticos (Faltas Consecutivas)")
+        alertas_ativos = False
+        for aluno in st.session_state.alunos_db:
+            if aluno['faltas_consecutivas'] >= 3:
+                alertas_ativos = True
+                st.error(f"⚠️ **ALERTA:** A criança **{aluno['nome']}** ({aluno['turma']}) acumulou **{aluno['faltas_consecutivas']} faltas seguidas**. Contato: **{aluno['contato']}**")
+        if not alertas_ativos: st.success("✅ Nenhuma evasão detectada.")
+            
+        st.divider()
+        
+        # Abas de Gestão Administrativa (CRUD)
+        maba1, maba2, maba3 = st.tabs(["👥 Gerenciar Professores", "👶 Gerenciar Alunos", "📋 Histórico de Ocorrências"])
+        
+        # CRUD PROFESSORES
+        with maba1:
+            st.subheader("Gerenciamento de Funcionários")
+            acao_p = st.radio("Operação (Professores):", ["Cadastrar Novo", "Editar Perfil", "Excluir Registro"], horizontal=True)
+            
+            if acao_p == "Cadastrar Novo":
+                with st.form("add_prof", clear_on_submit=True):
+                    mat_n = st.text_input("Nova Matrícula (Código de Acesso):")
+                    nome_p = st.text_input("Nome Completo:")
+                    cargo_p = st.selectbox("Cargo:", ["Professor Regular", "Professor AEE", "Monitor", "Administrador"])
+                    turma_p = st.selectbox("Turma Atribuída:", ["Berçário", "Maternal I", "Maternal II", "Pré I", "Pré II", "Geral"])
+                    if st.form_submit_button("➕ Salvar Funcionário"):
+                        if mat_n and nome_p:
+                            st.session_state.professores_db[mat_n] = {"nome": nome_p, "cargo": cargo_p, "turma": turma_p}
+                            salvar_dados("db")
+                            st.success(f"{nome_p} cadastrado!")
+                            st.rerun()
+            
+            elif acao_p == "Editar Perfil":
+                p_sel = st.selectbox("Selecione para Editar:", list(st.session_state.professores_db.keys()), format_func=lambda x: f"{st.session_state.professores_db[x]['nome']} ({x})")
+                with st.form("edit_prof"):
+                    nome_e = st.text_input("Alterar Nome:", value=st.session_state.professores_db[p_sel]['nome'])
+                    cargo_e = st.selectbox("Alterar Cargo:", ["Professor Regular", "Professor AEE", "Monitor", "Administrador"], index=["Professor Regular", "Professor AEE", "Monitor", "Administrador"].index(st.session_state.professores_db[p_sel]['cargo']))
+                    turma_e = st.selectbox("Alterar Turma:", ["Berçário", "Maternal I", "Maternal II", "Pré I", "Pré II", "Geral", "Inclusão Geral", "Plantão"], value=st.session_state.professores_db[p_sel]['turma'])
+                    if st.form_submit_button("💾 Atualizar Dados"):
+                        st.session_state.professores_db[p_sel] = {"nome": nome_e, "cargo": cargo_e, "turma": turma_e}
+                        salvar_dados("db")
+                        st.success("Dados updated!")
+                        st.rerun()
+                        
+            elif acao_p == "Excluir Registro":
+                p_del = st.selectbox("Selecione para Deletar:", list(st.session_state.professores_db.keys()), format_func=lambda x: f"{st.session_state.professores_db[x]['nome']} ({x})")
+                if st.button("❌ Confirmar Exclusão Definitiva"):
+                    if p_del == matricula:
+                        st.error("Você não pode excluir a sua própria conta ativa.")
+                    else:
+                        del st.session_state.professores_db[p_del]
+                        salvar_dados("db")
+                        st.success("Funcionário removido com sucesso!")
+                        st.rerun()
+
+        # CRUD ALUNOS (ATUALIZADO COM EXCLUSÃO MANUAL POR ID/NOME)
+        with maba2:
+            st.subheader("Gerenciamento do Carômetro de Alunos")
+            acao_a = st.radio("Operação (Alunos):", ["Cadastrar Novo Aluno", "Editar Ficha de Saúde", "Excluir Aluno (Lista)", "Excluir Aluno (Manual)"], horizontal=True)
+            
+            if acao_a == "Cadastrar Novo Aluno":
+                with st.form("add_aluno", clear_on_submit=True):
+                    nome_n = st.text_input("Nome Completo do Aluno:")
+                    turma_n = st.selectbox("Turma Escolar:", ["Berçário", "Maternal I", "Maternal II", "Pré I", "Pré II"])
+                    alergias_n = st.text_input("Alergias:", value="Nenhuma")
+                    rest_n = st.text_input("Restrições Alimentares:", value="Nenhuma")
+                    retirada_n = st.text_input("Autorizados para Retirada:")
+                    contato_n = st.text_input("Contatos de Emergência:")
+                    if st.form_submit_button("➕ Registrar Criança"):
+                        if nome_n:
+                            # Gera um ID sequencial seguro baseado no maior ID existente
+                            ids_existentes = [int(a['id']) for a in st.session_state.alunos_db if a['id'].isdigit()]
+                            novo_id = str(max(ids_existentes) + 1) if ids_existentes else "1"
+                            
+                            novo_a = {"id": novo_id, "nome": nome_n, "turma": turma_n, "alergias": allergies_n, "restricoes": rest_n, "retirada": retirada_n, "contato": contato_n, "foto": "👶", "faltas_consecutivas": 0}
+                            st.session_state.alunos_db.append(novo_a)
+                            salvar_dados("alunos")
+                            st.success(f"{nome_n} adicionado com o ID: {novo_id}!")
+                            st.rerun()
+            
+            elif acao_a == "Editar Ficha de Saúde":
+                a_sel_idx = st.selectbox("Selecione a Criança:", range(len(st.session_state.alunos_db)), format_func=lambda x: f"ID: {st.session_state.alunos_db[x]['id']} - {st.session_state.alunos_db[x]['nome']}")
+                aluno_e = st.session_state.alunos_db[a_sel_idx]
+                with st.form("edit_aluno"):
+                    nome_ae = st.text_input("Nome:", value=aluno_e['nome'])
+                    turma_ae = st.selectbox("Turma:", ["Berçário", "Maternal I", "Maternal II", "Pré I", "Pré II"], index=["Berçário", "Maternal I", "Maternal II", "Pré I", "Pré II"].index(aluno_e['turma']))
+                    alergias_ae = st.text_input("Alergias:", value=aluno_e['alergias'])
+                    rest_ae = st.text_input("Restrições:", value=aluno_e['restricoes'])
+                    retirada_ae = st.text_input("Retirada:", value=aluno_e['retirada'])
+                    contato_ae = st.text_input("Contatos:", value=aluno_e['contato'])
+                    if st.form_submit_button("💾 Salvar Alterações na Ficha"):
+                        st.session_state.alunos_db[a_sel_idx] = {"id": aluno_e['id'], "nome": nome_ae, "turma": turma_ae, "alergias": allergies_ae, "restricoes": rest_ae, "retirada": retirada_ae, "contato": contato_ae, "foto": aluno_e['foto'], "faltas_consecutivas": aluno_e['faltas_consecutivas']}
+                        salvar_dados("alunos")
+                        st.success("Ficha atualizada!")
+                        st.rerun()
+                        
+            elif acao_a == "Excluir Aluno (Lista)":
+                a_del_idx = st.selectbox("Selecione o Aluno para Remover:", range(len(st.session_state.alunos_db)), format_func=lambda x: f"ID: {st.session_state.alunos_db[x]['id']} - {st.session_state.alunos_db[x]['nome']} ({st.session_state.alunos_db[x]['turma']})")
+                if st.button("❌ Confirmar Exclusão Selecionada"):
+                    nome_removido = st.session_state.alunos_db[a_del_idx]['nome']
+                    st.session_state.alunos_db.pop(a_del_idx)
+                    salvar_dados("alunos")
+                    st.success(f"{nome_removido} removido do sistema!")
+                    st.rerun()
+
+            # NOVO MÓDULO: EXCLUSÃO MANUAL POR TEXTO (ID OU NOME EXACTO)
+            elif acao_a == "Excluir Aluno (Manual)":
+                st.warning("⚠️ Cuidado: Esta ação removerá o aluno de forma permanente do banco de dados.")
+                termo_exclusao = st.text_input("Digite o ID exato ou o Nome Completo da criança para excluir:")
+                
+                if st.button("🗑️ Executar Exclusão Manual"):
+                    aluno_encontrado = None
+                    # Procura pelo ID ou pelo Nome Exato
+                    for idx, aluno in enumerate(st.session_state.alunos_db):
+                        if aluno['id'] == termo_exclusao.strip() or aluno['nome'].lower().strip() == termo_exclusao.lower().strip():
+                            aluno_encontrado = idx
+                            break
+                    
+                    if aluno_encontrado is not None:
+                        nome_removido = st.session_state.alunos_db[aluno_encontrado]['nome']
+                        st.session_state.alunos_db.pop(aluno_encontrado)
+                        salvar_dados("alunos")
+                        st.success(f"Sucesso! O registro de '{nome_removido}' foi completamente deletado.")
+                        st.rerun()
+                    else:
+                        st.error("Nenhum aluno foi localizado com esse ID ou Nome exato. Verifique os dados e tente novamente.")
+
+        # HISTÓRICO DE OCORRÊNCIAS
+        with maba3:
+            st.subheader("📋 Histórico Recente de Ocorrências")
+            if st.session_state.get('ocorrencias_salvas'):
+                for oc in reversed(st.session_state.ocorrencias_salvas):
+                    with st.expander(f"📌 {oc['tipo']} - {oc['aluno']}"):
