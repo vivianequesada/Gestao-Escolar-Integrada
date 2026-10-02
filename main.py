@@ -1097,6 +1097,7 @@ def registered_teacher_rows() -> list[sqlite3.Row]:
         FROM authorized_users
         WHERE role = 'Professor' AND active = 1
         ORDER BY full_name COLLATE NOCASE, registry
+        """
     )
 
 
