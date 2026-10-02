@@ -616,7 +616,6 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
         if all_students:
             student_sel = st.selectbox("Selecione o Aluno para Consulta Completa:", [r["name"] for r in all_students])
             aluno = next(r for r in all_students if r["name"] == student_sel)
-            
             st.markdown(f"### Ficha de Saúde Global: {aluno['name']}")
             st.write(f"🔴 **Alergias:** {aluno.get('allergies','Nenhuma')}")
             st.write(f"🥛 **Restrições:** {aluno.get('food_restrictions','Nenhuma')}")
