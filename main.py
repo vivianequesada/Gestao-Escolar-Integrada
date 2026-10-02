@@ -873,3 +873,276 @@ def save_occurrence(
     teacher: dict[str, str],
 ) -> None:
     with connection_scope() as connection:
+Objetivos de aprendizagem e participação:
+{row['goals']}
+
+Atendimentos e recursos de apoio:
+{row['supports']}
+
+Avanços observados e próximos passos:
+{row['progress']}
+
+Registro criado em: {created_label}
+"""
+
+
+def render_login() -> None:
+    st.title(APP_TITLE)
+    st.subheader("Acesso ao sistema")
+    st.caption("Informe sua matrícula e os dados solicitados para entrar.")
+    with st.form("teacher_login_form"):
+        teacher_name = st.text_input("Nome completo", help="Pode ficar em branco se já estiver cadastrado.")
+        teacher_registry = st.text_input("Matrícula da Prefeitura")
+        teacher_email = st.text_input(
+            "E-mail",
+            placeholder="professor@escola.edu.br",
+            help="Pode ficar em branco se o administrador já cadastrou seu e-mail.",
+        )
+        login_submitted = st.form_submit_button("Acessar", type="primary")
+
+    if login_submitted:
+        normalized_registry = teacher_registry.strip().lower()
+        normalized_email = teacher_email.strip().lower()
+        account = get_authorized_user(normalized_registry)
+        if not normalized_registry or account is None or not account["active"]:
+            st.error("Matrícula não autorizada. Solicite à administração o cadastro da sua matrícula.")
+        elif account["role"] == "Administrador":
+            if normalized_email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized_email):
+                st.error("Informe um endereço de e-mail válido ou deixe o campo em branco.")
+            else:
+                st.session_state["teacher_profile"] = {
+                    "name": account["full_name"] or "Administrador",
+                    "registry": account["registry"],
+                    "email": normalized_email or account["email"],
+                    "role": "Administrador",
+                    "teacher_type": account["teacher_type"],
+                    "classroom_id": account["classroom_id"],
+                }
+                st.rerun()
+        else:
+            resolved_name = account["full_name"] or teacher_name.strip()
+            resolved_email = account["email"] or normalized_email
+            if not resolved_name:
+                st.error("Preencha o nome ou solicite ao administrador que complete seu cadastro.")
+            elif account["role"] == "Professor" and not resolved_email:
+                st.error("Professores precisam ter um e-mail cadastrado.")
+            elif resolved_email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", resolved_email):
+                st.error("Informe um endereço de e-mail válido.")
+            else:
+                complete_teacher_profile(account["registry"], resolved_name, resolved_email)
+                st.session_state["teacher_profile"] = {
+                    "name": resolved_name,
+                    "registry": account["registry"],
+                    "email": resolved_email,
+                    "role": account["role"],
+                    "teacher_type": account["teacher_type"],
+                    "classroom_id": account["classroom_id"],
+                }
+                st.rerun()
+
+
+def render_announcements() -> None:
+    st.subheader("Quadro de Avisos")
+    with st.form("announcement_form", clear_on_submit=True):
+        title = st.text_input("Título", max_chars=120)
+        col1, col2 = st.columns(2)
+        category = col1.selectbox("Categoria", ["Comunicado", "Evento", "Reunião", "Prazo", "Outro"])
+        audience = col2.selectbox(
+            "Público",
+            ["Toda a comunidade", "Estudantes", "Famílias", "Equipe escolar"],
+        )
+        body = st.text_area("Mensagem", height=120)
+        submitted = st.form_submit_button("Publicar aviso", type="primary")
+    if submitted:
+        if not title.strip() or not body.strip():
+            st.error("Informe o título e a mensagem do aviso.")
+        else:
+            save_announcement(title, category, audience, body)
+            st.success("Aviso publicado.")
+
+    st.divider()
+    announcements = fetch_all("SELECT * FROM announcements ORDER BY created_at DESC, id DESC")
+    if not announcements:
+        st.info("Ainda não há avisos. Publique o primeiro comunicado acima.")
+        return
+    for row in announcements:
+        with st.container(border=True):
+            st.markdown(f"{row['title']}")
+            st.caption(
+                f"{row['category']} · {row['audience']} · "
+                f"{datetime.fromisoformat(row['created_at']).strftime('%d/%m/%Y às %H:%M')}"
+            )
+            st.write(row["body"])
+            if st.button("Excluir aviso", key=f"delete_announcement_{row['id']}"):
+                delete_record("announcements", row["id"])
+                st.rerun()
+
+
+def render_daily_attendance(teacher: dict[str, str]) -> None:
+    st.subheader("Chamada Diária")
+    st.caption("Registre presença por turma e consulte as chamadas já salvas.")
+    rooms = classrooms_for_teacher(teacher)
+    room_names = [row["name"] for row in rooms]
+    selected_room = st.selectbox("Sala de aula", room_names, key="attendance_room")
+    classroom_id = next(row["id"] for row in rooms if row["name"] == selected_room)
+    attendance_date = st.date_input("Data da chamada", value=date.today(), key="attendance_date")
+    students = students_in_classroom(classroom_id)
+    existing = {
+        row["student_id"]: row["status"]
+        for row in fetch_all(
+            "SELECT student_id, status FROM attendance WHERE attendance_date = ?",
+            (attendance_date.isoformat(),),
+        )
+    }
+    with st.form("daily_attendance_form"):
+        statuses: dict[int, str] = {}
+        for student in students:
+            current = existing.get(student["id"], "Presente")
+            statuses[student["id"]] = st.selectbox(
+                f"{student['name']} · {student['code']}",
+                STATUS_CHAMADA,
+                index=STATUS_CHAMADA.index(current) if current in STATUS_CHAMADA else 0,
+                key=f"attendance_{attendance_date.isoformat()}_{student['id']}",
+            )
+        submitted = st.form_submit_button("Salvar chamada", type="primary")
+        
+    if submitted:
+        save_attendance(statuses, attendance_date, teacher)
+        st.success("Chamada salva.")
+
+    st.divider()
+    rows = fetch_all(
+        """
+        SELECT students.name, students.code, attendance.status
+        FROM attendance
+        JOIN students ON students.id = attendance.student_id
+        WHERE students.classroom_id = ? AND attendance.attendance_date = ?
+        ORDER BY students.name
+        """,
+        (classroom_id, attendance_date.isoformat()),
+    )
+    if rows:
+        st.dataframe(
+            [{"Aluno": row["name"], "Código": row["code"], "Situação": row["status"]} for row in rows],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("Ainda não há chamada salva para esta turma e data.")
+
+
+def render_assessment_calendar(teacher: dict[str, str]) -> None:
+    st.subheader("Calendário de Avaliações")
+    rooms = classroom_rows()
+    with st.form("assessment_form", clear_on_submit=True):
+        title = st.text_input("Avaliação", placeholder="Ex.: Avaliação de leitura")
+        col1, col2, col3 = st.columns(3)
+        room_name = col1.selectbox("Sala", [row["name"] for row in rooms])
+        subject = col2.text_input("Componente curricular")
+        assessment_type = col3.selectbox("Tipo", ["Prova", "Trabalho", "Apresentação", "Recuperação", "Outro"])
+        assessment_date = st.date_input("Data", value=date.today())
+        notes = st.text_area("Orientações para a turma", height=90)
+        submitted = st.form_submit_button("Adicionar avaliação", type="primary")
+        
+    if submitted:
+        if not title.strip() or not subject.strip():
+            st.error("Preencha o nome da avaliação e o componente curricular.")
+        else:
+            classroom_id = next(row["id"] for row in rooms if row["name"] == room_name)
+            save_assessment(title, classroom_id, subject, assessment_type, assessment_date, notes, teacher)
+            st.success("Avaliação adicionada ao calendário.")
+
+    rows = fetch_all(
+        """
+        SELECT assessments.id, assessments.title, classrooms.name AS classroom,
+               assessments.subject, assessments.assessment_type, assessments.assessment_date,
+               assessments.notes, assessments.teacher_name
+        FROM assessments JOIN classrooms ON classrooms.id = assessments.classroom_id
+        ORDER BY assessments.assessment_date, assessments.title
+        """
+    )
+    st.divider()
+    if not rows:
+        st.info("Nenhuma avaliação cadastrada.")
+        return
+    st.dataframe(
+        [
+            {
+                "Data": format_date(row["assessment_date"]),
+                "Sala": row["classroom"],
+                "Avaliação": row["title"],
+                "Componente": row["subject"],
+                "Tipo": row["assessment_type"],
+                "Orientações": row["notes"],
+            }
+            for row in rows
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def decode_plan_content(content: str) -> dict:
+    try:
+        decoded = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        return {"legacy_text": content}
+    return decoded if isinstance(decoded, dict) else {"legacy_text": content}
+
+
+def registered_teacher_rows() -> list[sqlite3.Row]:
+    return fetch_all(
+        """
+        SELECT registry, full_name
+        FROM authorized_users
+        WHERE role = 'Professor' AND active = 1
+        ORDER BY full_name COLLATE NOCASE, registry
+        """
+    )
+
+
+def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> str:
+    payload = decode_plan_content(row["content"])
+    subject_reports = payload.get("subject_reports", {})
+    if not isinstance(subject_reports, dict):
+        subject_reports = {}
+        
+    subject_sections = "".join(
+        "<section class='subject-report'>"
+        f"<h3>{html.escape(area)}</h3>"
+        f"<div>{html.escape(str(subject_reports.get(area, ''))).replace(chr(10), '<br>')}</div>"
+        "</section>"
+        for area in AREAS_PEDAGOGICAS
+    )
+    legacy_text = payload.get("legacy_text", "")
+    if legacy_text and not payload.get("subject_reports"):
+        subject_sections = (
+            "<section class='subject-report legacy-report'>"
+            f"<div>{html.escape(str(legacy_text)).replace(chr(10), '<br>')}</div>"
+            "</section>"
+        )
+        
+    aee_report = str(payload.get("aee_report", "")).strip()
+    signatures = []
+    for row_teacher in teachers:
+        full_name = (row_teacher["full_name"] or "").strip()
+        label = (
+            f"Prof. {full_name}"
+            if full_name
+            else f"Professor(a) — matrícula {row_teacher['registry']}"
+        )
+        signatures.append(
+            "<div class='signature-block'>"
+            "<div class='signature-line'></div>"
+            f"<div class='signature-name'>{html.escape(label)}</div>"
+            "</div>"
+        )
+    signatures_html = "".join(signatures) or (
+        "<p class='no-signatures'>Nenhum professor está cadastrado para assinatura.</p>"
+    )
+    trimester = row["trimester"] or payload.get("trimestre", "")
+    trimester_html = (
+        f"<span><strong>Trimestre:</strong> {html.escape(trimester)}</span>"
+        if trimester
+        else ""
+    )
