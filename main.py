@@ -515,7 +515,6 @@ def render_daily_attendance(teacher: dict[str, str]) -> None:
         save_attendance(statuses, attendance_date, teacher)
         st.success("Frequência enviada e consolidada no histórico escolar!")
         st.rerun()
-
 def render_minutes_and_plans(teacher: dict[str, str]) -> None:
     st.subheader("📝 Gestão de Atas por Matéria e Planejamentos")
     rooms = classrooms_for_teacher(teacher)
@@ -523,42 +522,68 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
     selected_room = st.selectbox("Selecione a Sala:", room_names, key="plan_room")
     classroom_id = next(row["id"] for row in rooms if row["name"] == selected_room)
     
-    with st.form("form_ata_materias", clear_on_submit=True):
-        trimestre = st.selectbox("Trimestre Letivo:", TRIMESTRES)
-        st.write("### Deliberações Separadas por Matéria:")
-        reports = {}
-        for area in AREAS_PEDAGOGICAS:
-            reports[area] = st.text_area(f"📌 Parecer Coletivo: {area}")
+    # Seletor de Abas para separar Atas de Planejamentos sem quebrar o layout anterior
+    tipo_registro = st.radio("Selecione o Tipo de Operação:", ["Atas de Conselho", "Planejamento Pedagógico"], horizontal=True)
+    
+    if tipo_registro == "Atas de Conselho":
+        with st.form("form_ata_materias", clear_on_submit=True):
+            trimestre = st.selectbox("Trimestre Letivo:", TRIMESTRES)
+            st.write("### Deliberações Separadas por Matéria:")
+            reports = {}
+            for area in AREAS_PEDAGOGICAS:
+                reports[area] = st.text_area(f"📌 Parecer Coletivo: {area}")
+                
+            if st.form_submit_button("📝 Protocolar e Consolidar Ata"):
+                content_json = json.dumps({"subject_reports": reports})
+                save_plan_or_minutes("Ata", date.today(), classroom_id, "Geral", f"Conselho de Classe {trimestre}", content_json, teacher, trimester=trimestre)
+                st.success("Ata protocolada!")
+                st.rerun()
+                
+    elif tipo_registro == "Planejamento Pedagógico":
+        with st.form("form_planejamento_pedagogico", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                tri_plan = st.selectbox("Trimestre Alvo:", TRIMESTRES, key="t_plan")
+                quin_plan = st.selectbox("Quinzena:", QUINZENAS)
+            with col2:
+                mes_plan = st.selectbox("Mês de Referência:", MESES_DO_ANO)
+                bncc_plan = st.selectbox("Campo de Experiência (BNCC):", BNCC_EXPERIENCES)
+                
+            titulo_plan = st.text_input("Título do Planejamento:")
+            conteudo_plan = st.text_area("Detalhamento das Atividades e Vivências:")
             
-        if st.form_submit_button("📝 Protocolar e Consolidar Ata"):
-            content_json = json.dumps({"subject_reports": reports})
-            save_plan_or_minutes("Ata", date.today(), classroom_id, "Geral", f"Conselho de Classe {trimestre}", content_json, teacher, trimester=trimestre)
-            st.success("Ata protocolada!")
-            st.rerun()
+            if st.form_submit_button("💾 Protocolar Planejamento Mensal"):
+                if not titulo_plan.strip() or not conteudo_plan.strip():
+                    st.error("Preencha todos os campos do planejamento.")
+                else:
+                    save_plan_or_minutes("Planejamento", date.today(), classroom_id, bncc_plan, titulo_plan, conteudo_plan, teacher, month_name=mes_plan, quinzena=quin_plan, trimester=tri_plan)
+                    st.success("Planejamento pedagógico registrado!")
+                    st.rerun()
             
     st.divider()
-    st.subheader("🖨️ Histórico de Atas Prontas para Impressão")
-    atas = fetch_all(
-        """
-        SELECT plans_minutes.*, classrooms.name AS classroom 
-        FROM plans_minutes 
-        LEFT JOIN classrooms ON classrooms.id = plans_minutes.classroom_id 
-        WHERE record_type = 'Ata' AND classroom_id = ? 
-        ORDER BY id DESC
-        """, 
-        (classroom_id,)
-    )
+    st.subheader("🖨️ Histórico de Documentos Oficiais Cadastrados")
+    documentos = fetch_all("SELECT * FROM plans_minutes WHERE classroom_id = ? ORDER BY id DESC", (classroom_id,))
     teachers = registered_teacher_rows()
     
-    for row in atas:
+    for row in documentos:
         with st.container(border=True):
-            html_content = build_minutes_print_html(row, teachers)
-            st.html(html_content)
-            st.button(
-                "🖨️ Abrir Janela de Impressão (Salvar como PDF)", 
-                key=f"print_{row['id']}", 
-                on_click=lambda h=html_content: st.html(f"<script>var win = window.open('', '_blank'); win.document.write({json.dumps(h)}); win.document.close(); win.print();</script>")
-            )
+            if row["record_type"] == "Ata":
+                st.markdown(f"##### 📄 Ata: {row['title']}")
+                html_content = build_minutes_print_html(row, teachers)
+                st.html(html_content)
+                st.button(
+                    "🖨️ Abrir Janela de Impressão (Salvar como PDF)", 
+                    key=f"print_{row['id']}", 
+                    on_click=lambda h=html_content: st.html(f"<script>var win = window.open('', '_blank'); win.document.write({json.dumps(h)}); win.document.close(); win.print();</script>")
+                )
+            else:
+                st.markdown(f"##### 📅 Planejamento: {row['title']}")
+                st.caption(f"Mês: {row['month_name']} | {row['quinzena']} | Campo BNCC: {row['subject']}")
+                st.write(row["content"])
+                if st.button("Excluir Documento", key=f"del_doc_rec_{row['id']}"):
+                    delete_record("plans_minutes", row["id"])
+                    st.rerun()
+
 def render_assessment_calendar(teacher: dict[str, str]) -> None:
     st.subheader("📅 Calendário de Avaliações")
     rooms = classroom_rows()
@@ -595,7 +620,6 @@ def render_assessment_calendar(teacher: dict[str, str]) -> None:
             use_container_width=True, 
             hide_index=True
         )
-
 def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
     st.subheader("🧩 Atendimento Educacional Especializado (AEE)")
     aba_aee = st.radio("Escolha a Operação:", ["Anexar Arquivo PDF Externo / Laudo", "Histórico de Prontuários e PDFs"], horizontal=True)
@@ -642,7 +666,7 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
                 st.subheader("📁 Arquivos PDF Anexados no Prontuário Escolar")
                 for doc in pdfs:
                     with st.container(border=True):
-                        c1, c2 = st.columns()
+                        c1, c2 = st.columns([3, 1])
                         c1.write(f"📄 {doc['nome']} (Anexado em {doc['data']})")
                         if os.path.exists(doc["caminho"]):
                             with open(doc["caminho"], "rb") as f_pdf:
@@ -659,36 +683,23 @@ def render_space_reservations(teacher: dict[str, str]) -> None:
     st.write("Preencha os campos abaixo para reservar um ambiente.")
 
     with st.form("formulario_agendamento", clear_on_submit=True):
-        local_opcao = st.selectbox("Selecione o Local desejado:", list(ESPACOS))
+        local_opcao = st.selectbox("Selecione o Local desejado:", ["Quadra", "Biblioteca", "Informática"])
         
-        col1, col_turno, col2 = st.columns([1.5, 1, 2.5])
+        col1, col2 = st.columns(2)
         with col1:
             data_reserva = st.date_input("Data do Agendamento:", date.today())
-        with col_turno:
-            turno = st.selectbox("Turno:", ["Manhã", "Tarde"])
             
         with col2:
-            # Filtro dinâmico com os horários exatos fornecidos por você
-            if turno == "Manhã":
-                lista_horarios = [
-                    "07:00 às 07:50 (1º Horário)",
-                    "07:50 às 08:40 (2º Horário)",
-                    "08:40 às 09:30 (3º Horário)",
-                    "09:30 às 10:20 (4º Horário)",
-                    "10:20 às 11:10 (5º Horário)",
-                    "11:10 às 12:00 (6º Horário)"
+            horario_reserva = st.selectbox(
+                "Horário / Período Exato:",
+                [
+                    "Manhã: 07:00 às 07:50", "Manhã: 07:50 às 08:40", "Manhã: 08:40 às 09:30",
+                    "Manhã: 09:30 às 10:20", "Manhã: 10:20 às 11:10", "Manhã: 11:10 às 12:00",
+                    "Tarde: 12:20 às 13:10", "Tarde: 13:10 às 14:00", "Tarde: 14:00 às 14:50",
+                    "Tarde: 14:50 às 15:40", "Tarde: 15:40 às 16:30", "Tarde: 16:30 às 17:20",
+                    "Tarde: 17:20 às 18:10"
                 ]
-            else:
-                lista_horarios = [
-                    "12:20 às 13:10 (1º Horário)",
-                    "13:10 às 14:00 (2º Horário)",
-                    "14:00 às 14:50 (3º Horário)",
-                    "14:50 às 15:40 (4º Horário)",
-                    "15:40 às 16:30 (5º Horário)",
-                    "16:30 às 17:20 (6º Horário)",
-                    "17:20 às 18:10 (7º Horário)"
-                ]
-            horario_reserva = st.selectbox("Horário / Período Exato:", lista_horarios)
+            )
             
         rooms = classroom_rows()
         turma_alvo = st.selectbox("Selecione a Turma que utilizará o espaço:", [row["name"] for row in rooms])
@@ -711,6 +722,36 @@ def render_space_reservations(teacher: dict[str, str]) -> None:
                 )
             st.success(f"🎟️ Sucesso! **{local_opcao}** reservada para o dia **{data_reserva.strftime('%d/%m/%Y')}** no período **{horario_reserva}**.")
 
+def render_occurrences(teacher: dict[str, str]) -> None:
+    st.subheader("🚨 Registro de Ocorrências da Rotina")
+    all_students = fetch_all("SELECT id, name, code FROM students WHERE active = 1 ORDER BY name")
+    
+    if not all_students:
+        st.info("Nenhum aluno ativo para lançar ocorrências.")
+        return
+
+    with st.form("form_ocorrencia_rotina", clear_on_submit=True):
+        dict_alunos = {f"{r['name']} (Matrícula: {r['code']})": r["id"] for r in all_students}
+        aluno_sel = st.selectbox("Selecione o Aluno envolvido:", list(dict_alunos.keys()))
+        student_id = dict_alunos[aluno_sel]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            tipo_sel = st.selectbox("Tipo de Ocorrência:", OCCURRENCE_TYPES)
+        with col2:
+            gravidade_sel = st.selectbox("Nível de Gravidade:", OCCURRENCE_SEVERITIES)
+            
+        data_ocorrido = st.date_input("Data do Fato:", date.today())
+        detalhes = st.text_area("Descrição detalhada do ocorrido:")
+        botao_salvar = st.form_submit_button("🚨 Protocolar Ocorrência", type="primary")
+
+    if botao_salvar:
+        if not detalhes.strip():
+            st.error("Preencha a descrição da ocorrência.")
+        else:
+            save_occurrence(student_id, tipo_sel, gravidade_sel, detalhes, data_ocorrido, teacher)
+            st.success("Ocorrência registrada com sucesso!")
+            st.rerun()
 def render_admin_dashboard() -> None:
     st.header("⚙️ Painel Administrativo de Controle Geral")
     aba_gerencia = st.radio("Escolha a Ação Administrativa:", ["👥 Cadastrar/Editar Funcionários", "👶 Matricular Novo Aluno no Carômetro", "🗑️ Excluir Alunos e Funcionários"], horizontal=True)
@@ -780,39 +821,16 @@ def render_admin_dashboard() -> None:
                 st.info("Nenhum aluno cadastrado.")
 
 # =====================================================================
-# 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS
+# 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS (LIMPO E EXCLUSIVO)
 # =====================================================================
 if "teacher_profile" not in st.session_state:
     render_login()
 else:
     prof = st.session_state["teacher_profile"]
-    st.sidebar.markdown(f"### 👤 {prof['name']}")
-    st.sidebar.caption(f"Cargo: {prof['role']} | Acesso: {prof['registry']}")
-    if st.sidebar.button("🚪 Sair do Sistema"):
-        del st.session_state["teacher_profile"]
-        st.rerun()
-        
-    st.sidebar.divider()
     
-    st.subheader("🚨 Central Escolar de Alertas Críticos (Evasão)")
-    evasao_rows = fetch_all("SELECT name, faltas_consecutivas, emergency_contact FROM students WHERE faltas_consecutivas >= 3")
-    if evasao_rows:
-        for ev in evasao_rows:
-            st.error(f"⚠️ **RISCO DE EVASÃO:** {ev['name']} acumulou {ev['faltas_consecutivas']} faltas consecutivas! Contato: {ev['emergency_contact']}")
-    else:
-        st.success("✅ Nenhuma evasão detectada nas salas de Educação Infantil.")
-    st.divider()
-
-# =====================================================================
-# 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS
-# =====================================================================
-if "teacher_profile" not in st.session_state:
-    render_login()
-else:
-    prof = st.session_state["teacher_profile"]
     st.sidebar.markdown(f"### 👤 {prof['name']}")
     st.sidebar.caption(f"Cargo: {prof['role']} | Acesso: {prof['registry']}")
-    if st.sidebar.button("🚪 Sair do Sistema", key="btn_sair_unico"):
+    if st.sidebar.button("🚪 Sair do Sistema", key="btn_sair_definitivo"):
         del st.session_state["teacher_profile"]
         st.rerun()
         
@@ -838,9 +856,9 @@ else:
         "🚨 Ocorrências da Rotina"
     ]
 
-    # Roteamento administrativo ou pedagógico com base no cargo autenticado
+    # Processamento e roteamento dinâmico baseado em papéis
     if prof["role"] == "Administrador":
-        menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + paginas_menu, key="radio_menu_adm")
+        menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + paginas_menu, key="nav_adm_final")
         
         if menu_escolha == ADMIN_PAGE: 
             render_admin_dashboard()
@@ -858,11 +876,9 @@ else:
             render_space_reservations(prof)
         elif menu_escolha == "🚨 Ocorrências da Rotina": 
             render_occurrences(prof)
-        else: 
-            st.info("Módulo pedagógico em desenvolvimento estrutural.")
         
     elif prof["role"] == "Professor":
-        menu_escolha = st.sidebar.radio("Navegar para:", paginas_menu, key="radio_menu_prof")
+        menu_escolha = st.sidebar.radio("Navegar para:", paginas_menu, key="nav_prof_final")
         
         if menu_escolha == "📢 Quadro de Avisos": 
             render_announcements()
@@ -878,8 +894,6 @@ else:
             render_space_reservations(prof)
         elif menu_escolha == "🚨 Ocorrências da Rotina": 
             render_occurrences(prof)
-        else: 
-            st.info("Acesse a aba selecionada na barra lateral.")
         
     elif prof["role"] == "Monitor":
         st.title(MONITOR_PAGE)
