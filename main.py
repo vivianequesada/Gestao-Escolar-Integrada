@@ -803,6 +803,78 @@ else:
         st.success("✅ Nenhuma evasão detectada nas salas de Educação Infantil.")
     st.divider()
 
+   def render_occurrences(teacher: dict[str, str]) -> None:
+    st.subheader("🚨 Registro de Ocorrências da Rotina")
+    st.write("Utilize este formulário para relatar incidentes, episódios de saúde ou indisposições.")
+
+    # Busca todos os alunos cadastrados para preencher o selectbox
+    all_students = fetch_all("SELECT id, name, code FROM students WHERE active = 1 ORDER BY name")
+    
+    if not all_students:
+        st.info("Nenhum aluno ativo cadastrado no sistema para registrar ocorrências.")
+        return
+
+    with st.form("form_ocorrencia_rotina", clear_on_submit=True):
+        # 1. Seleção do Aluno
+        dict_alunos = {f"{r['name']} (Matrícula: {r['code']})": r["id"] for r in all_students}
+        aluno_sel = st.selectbox("Selecione o Aluno envolvido:", list(dict_alunos.keys()))
+        student_id = dict_usuarios = dict_alunos[aluno_sel]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            # 2. Tipo da ocorrência (puxando da sua tupla OCCURRENCE_TYPES)
+            tipo_sel = st.selectbox("Tipo de Ocorrência:", OCCURRENCE_TYPES)
+        with col2:
+            # 3. Gravidade (puxando da sua tupla OCCURRENCE_SEVERITIES)
+            gravidade_sel = st.selectbox("Nível de Gravidade:", OCCURRENCE_SEVERITIES)
+            
+        # 4. Data do ocorrido
+        data_ocorrido = st.date_input("Data do Fato:", date.today())
+        
+        # 5. Detalhes minuciosos
+        detalhes = st.text_area("Descrição detalhada do ocorrido (Ações tomadas, observações):")
+        
+        botao_salvar = st.form_submit_button("🚨 Protocolar Ocorrência", type="primary")
+
+    if botao_salvar:
+        if not detalhes.strip():
+            st.error("Por favor, preencha os detalhes da ocorrência antes de salvar.")
+        else:
+            # Usa a sua função save_occurrence já existente no seu banco
+            save_occurrence(student_id, tipo_sel, gravidade_sel, detalhes, data_ocorrido, teacher)
+            st.success("Ocorrência protocolada e anexada ao prontuário do aluno com sucesso!")
+            st.rerun()
+
+    # --- HISTÓRICO DE OCORRÊNCIAS LOGO ABAIXO ---
+    st.divider()
+    st.subheader("📋 Histórico Recente de Ocorrências Registradas")
+    
+    historico = fetch_all(
+        """
+        SELECT occurrences.*, students.name AS student_name, students.code AS student_code 
+        FROM occurrences 
+        JOIN students ON students.id = occurrences.student_id 
+        ORDER BY occurrences.occurrence_date DESC, occurrences.id DESC
+        """
+    )
+    
+    if historico:
+        for oc in historico:
+            # Aplica uma cor visual baseada na gravidade
+            cor = "🔴 Alta" if oc["severity"] == "Alta" else ("🟡 Média" if oc["severity"] == "Média" else "🟢 Leve")
+            
+            with st.container(border=True):
+                st.markdown(f"### Aluno: {oc['student_name']} `({oc['student_code']})`")
+                st.caption(f"📅 **Data:** {format_date(oc['occurrence_date'])} · 📌 **Tipo:** {oc['occurrence_type']} · ⚖️ **Gravidade:** {cor}")
+                st.write(f"📝 **Relato:** {oc['details']}")
+                st.caption(f"✍️ **Registrado por:** {oc['teacher_name']} (Reg: {oc['teacher_registry']})")
+                
+                # Botão integrado para exclusão se necessário
+                if st.button("Excluir registro", key=f"del_oc_{oc['id']}"):
+                    delete_record("occurrences", oc["id"])
+                    st.rerun()
+    else:
+        st.info("Nenhuma ocorrência registrada no sistema até o momento.")
     if prof["role"] == "Administrador":
         menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + PEDAGOGICAL_PAGES)
         if menu_escolha == ADMIN_PAGE: render_admin_dashboard()
@@ -812,6 +884,7 @@ else:
         elif menu_escolha == "📅 Calendário de Avaliações": render_assessment_calendar(prof)
         elif menu_escolha == "🧒 Carômetro e Histórico de Alunos": render_aee_and_pdf_uploads(prof)
         elif menu_escolha == "🏢 Agendamento de Espaços": render_space_reservations(prof)
+        elif menu_escolha == "🚨 Ocorrências da Rotina": render_occurrences(prof) # <-- LINHA ADICIONADA AQUI
         else: st.info("Módulo pedagógico em desenvolvimento estrutural.")
         
     elif prof["role"] == "Professor":
@@ -822,8 +895,5 @@ else:
         elif menu_escolha == "📅 Calendário de Avaliações": render_assessment_calendar(prof)
         elif menu_escolha == "🧒 Carômetro e Histórico de Alunos": render_aee_and_pdf_uploads(prof)
         elif menu_escolha == "🏢 Agendamento de Espaços": render_space_reservations(prof)
+        elif menu_escolha == "🚨 Ocorrências da Rotina": render_occurrences(prof) # <-- LINHA ADICIONADA AQUI
         else: st.info("Acesse a aba selecionada na barra lateral.")
-        
-    elif prof["role"] == "Monitor":
-        st.title(MONITOR_PAGE)
-        render_aee_and_pdf_uploads(prof)
