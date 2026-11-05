@@ -660,15 +660,36 @@ def render_space_reservations(teacher: dict[str, str]) -> None:
 
     with st.form("formulario_agendamento", clear_on_submit=True):
         local_opcao = st.selectbox("Selecione o Local desejado:", list(ESPACOS))
-        col1, col2 = st.columns(2)
+        
+        col1, col_turno, col2 = st.columns([1.5, 1, 2.5])
         with col1:
             data_reserva = st.date_input("Data do Agendamento:", date.today())
+        with col_turno:
+            turno = st.selectbox("Turno:", ["Manhã", "Tarde"])
+            
         with col2:
-            horario_reserva = st.selectbox(
-                "Horário / Período:",
-                ["07:30 às 08:20 (1º Tempo)", "08:20 às 09:10 (2º Tempo)", "09:30 às 10:20 (3º Tempo)", 
-                 "13:00 às 14:30 (Turno Tarde)", "14:30 às 16:00 (Turno Tarde)"]
-            )
+            # Filtro dinâmico com os horários exatos fornecidos por você
+            if turno == "Manhã":
+                lista_horarios = [
+                    "07:00 às 07:50 (1º Horário)",
+                    "07:50 às 08:40 (2º Horário)",
+                    "08:40 às 09:30 (3º Horário)",
+                    "09:30 às 10:20 (4º Horário)",
+                    "10:20 às 11:10 (5º Horário)",
+                    "11:10 às 12:00 (6º Horário)"
+                ]
+            else:
+                lista_horarios = [
+                    "12:20 às 13:10 (1º Horário)",
+                    "13:10 às 14:00 (2º Horário)",
+                    "14:00 às 14:50 (3º Horário)",
+                    "14:50 às 15:40 (4º Horário)",
+                    "15:40 às 16:30 (5º Horário)",
+                    "16:30 às 17:20 (6º Horário)",
+                    "17:20 às 18:10 (7º Horário)"
+                ]
+            horario_reserva = st.selectbox("Horário / Período Exato:", lista_horarios)
+            
         rooms = classroom_rows()
         turma_alvo = st.selectbox("Selecione a Turma que utilizará o espaço:", [row["name"] for row in rooms])
         justificativa = st.text_area("Objetivo / Finalidade Pedagógica:")
@@ -689,6 +710,7 @@ def render_space_reservations(teacher: dict[str, str]) -> None:
                     (local_opcao, teacher["name"], teacher["registry"], teacher.get("email", ""), turma_alvo, str(data_reserva), horario_reserva, horario_reserva, justificativa, now_str)
                 )
             st.success(f"🎟️ Sucesso! **{local_opcao}** reservada para o dia **{data_reserva.strftime('%d/%m/%Y')}** no período **{horario_reserva}**.")
+
 def render_admin_dashboard() -> None:
     st.header("⚙️ Painel Administrativo de Controle Geral")
     aba_gerencia = st.radio("Escolha a Ação Administrativa:", ["👥 Cadastrar/Editar Funcionários", "👶 Matricular Novo Aluno no Carômetro", "🗑️ Excluir Alunos e Funcionários"], horizontal=True)
