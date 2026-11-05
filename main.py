@@ -584,7 +584,7 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
     """
     return html_content
 
-                elif tipo_registro == "Planejamento Pedagógico":
+            elif tipo_registro == "Planejamento Pedagógico":
         with st.form("form_planejamento_pedagogico", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
