@@ -543,22 +543,21 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
     
     tipo_registro = st.radio("Selecione o Tipo de Operação:", ["Atas de Conselho", "Planejamento Pedagógico"], horizontal=True)
     
-    if tipo_registro == "Atas de Conselho":
+       if tipo_registro == "Atas de Conselho":
         with st.form("form_ata_materias", clear_on_submit=True):
             trimestre = st.selectbox("Trimestre Letivo:", TRIMESTRES)
             st.write("### Deliberações Separadas por Matéria:")
-    # Dentro do st.form da Ata de Conselho na sua função render_minutes_and_plans:
-             reports = {}
-            for area in BNCC_EXPERIENCES:  # <-- Garanta que está BNCC_EXPERIENCES aqui!
+            
+            reports = {}
+            for area in BNCC_EXPERIENCES:
                 reports[area] = st.text_area(f"📌 Parecer Coletivo: {area}")
-
-
                 
             if st.form_submit_button("📝 Protocolar e Consolidar Ata"):
                 content_json = json.dumps({"subject_reports": reports})
                 save_plan_or_minutes("Ata", date.today(), classroom_id, "Geral", f"Conselho de Classe {trimestre}", content_json, teacher, trimester=trimestre)
                 st.success("Ata protocolada!")
                 st.rerun()
+
                 
     elif tipo_registro == "Planejamento Pedagógico":
         with st.form("form_planejamento_pedagogico", clear_on_submit=True):
