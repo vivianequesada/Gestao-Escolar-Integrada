@@ -907,6 +907,9 @@ else:
     # Processamento e roteamento dinâmico baseado em papéis
     if prof["role"] == "Administrador":
         menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + paginas_menu, key="nav_adm_final")
+    # Processamento e roteamento dinâmico baseado em papéis
+    if prof["role"] == "Administrador":
+        menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + paginas_menu, key="nav_adm_final")
         
         if menu_escolha == ADMIN_PAGE: 
             render_admin_dashboard()
