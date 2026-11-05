@@ -410,16 +410,23 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
     if not isinstance(subject_reports, dict):
         subject_reports = {}
         
+    # CORREÇÃO DO INDEXERROR: Usa dinamicamente a nova tupla BNCC_EXPERIENCES para montar os pareceres
     subject_sections = "".join(
         f"<div style='margin-bottom: 15px;'><b>📌 Componente: {html.escape(area)}</b>"
         f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(str(subject_reports.get(area, 'Sem apontamentos.'))).replace(chr(10), '<br>')}</p></div>"
-        for area in AREAS_PEDAGOGICAS
+        for area in BNCC_EXPERIENCES
     )
     
+    # ADICIONADO: Espaço de assinatura para TODOS os professores/adms cadastrados ativos no sistema
     signatures = []
     for row_teacher in teachers:
         if row_teacher["role"] in ["Professor", "Administrador"]:
-            signatures.append(f"<p style='margin-bottom: 25px;'>✍️ <b>{html.escape(row_teacher['full_name'].upper())}</b> ____________________________________</p>")
+            signatures.append(
+                f"<div style='margin-bottom: 25px; display: inline-block; width: 45%; min-width: 280px; margin-right: 4%; vertical-align: top;'>"
+                f"<p style='margin: 0;'>____________________________________</p>"
+                f"<p style='margin: 3px 0 0 0; font-size: 12px;'>✍️ <b>{html.escape(row_teacher['full_name'].upper())}</b> ({html.escape(row_teacher['role'])})</p>"
+                f"</div>"
+            )
     signatures_html = "".join(signatures)
     
     trimester = row["trimester"] or payload.get("trimestre", "")
@@ -430,11 +437,14 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
         <p style="font-size: 13px;"><b>Coordenador Responsável:</b> {html.escape(row['teacher_name'])}</p>
         <hr style="border-top: 1px solid #333; margin-bottom: 20px;">
         {subject_sections}
-        <br><hr style="border-top: 1px solid #333;"><h4>✍️ ASSINATURAS DOS PROFESSORES INTEGRADOS:</h4><br>
+        <br><hr style="border-top: 1px solid #333;"><h4 style='margin-bottom: 15px;'>✍️ CAMPOS PARA ASSINATURA DA EQUIPE ESCOLAR:</h4>
+        <div style='margin-top: 15px;'>
         {signatures_html}
+        </div>
     </div>
     """
     return html_content
+
 # =====================================================================
 # 6. INTERFACES VISUAIS DO APLICATIVO (FUNÇÕES DE RENDERIZAÇÃO)
 # =====================================================================
