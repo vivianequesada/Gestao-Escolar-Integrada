@@ -56,6 +56,7 @@ PEDAGOGICAL_PAGES = [
     "🚨 Ocorrências da Rotina",
 ]
 MONITOR_PAGE = "🔎 Carômetro de Segurança"
+
 BNCC_EXPERIENCES = (
     "Corpo, gesto e movimento",
     "Artes",
@@ -410,14 +411,21 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
     if not isinstance(subject_reports, dict):
         subject_reports = {}
         
-    # CORREÇÃO DO INDEXERROR: Usa dinamicamente a nova tupla BNCC_EXPERIENCES para montar os pareceres
+    # Identifica dinamicamente quais matérias estão salvas neste documento específico
+    # Se for uma ata antiga, usa as chaves antigas. Se for nova, usa as novas.
+    materias_para_renderizar = list(subject_reports.keys()) if subject_reports else list(BNCC_EXPERIENCES)
+    
+    # Se por acaso o documento estiver vazio, garante que use a lista atual
+    if not materias_para_renderizar:
+        materias_para_renderizar = list(BNCC_EXPERIENCES)
+        
     subject_sections = "".join(
         f"<div style='margin-bottom: 15px;'><b>📌 Componente: {html.escape(area)}</b>"
         f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(str(subject_reports.get(area, 'Sem apontamentos.'))).replace(chr(10), '<br>')}</p></div>"
-        for area in BNCC_EXPERIENCES
+        for area in materias_para_renderizar
     )
     
-    # ADICIONADO: Espaço de assinatura para TODOS os professores/adms cadastrados ativos no sistema
+    # Espaço de assinatura para TODOS os professores/adms cadastrados ativos no sistema
     signatures = []
     for row_teacher in teachers:
         if row_teacher["role"] in ["Professor", "Administrador"]:
@@ -444,6 +452,7 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
     </div>
     """
     return html_content
+
 
 # =====================================================================
 # 6. INTERFACES VISUAIS DO APLICATIVO (FUNÇÕES DE RENDERIZAÇÃO)
@@ -538,9 +547,12 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
         with st.form("form_ata_materias", clear_on_submit=True):
             trimestre = st.selectbox("Trimestre Letivo:", TRIMESTRES)
             st.write("### Deliberações Separadas por Matéria:")
-            reports = {}
-            for area in AREAS_PEDAGOGICAS:
-                reports[area] = st.text_area(f"📌 Parecer Coletivo: {area}")
+# Dentro do st.form da Ata de Conselho na sua função render_minutes_and_plans:
+reports = {}
+for area in BNCC_EXPERIENCES:  # <-- Garanta que está BNCC_EXPERIENCES aqui!
+    reports[area] = st.text_area(f"📌 Parecer Coletivo: {area}")
+
+
                 
             if st.form_submit_button("📝 Protocolar e Consolidar Ata"):
                 content_json = json.dumps({"subject_reports": reports})
