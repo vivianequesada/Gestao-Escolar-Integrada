@@ -58,11 +58,12 @@ PEDAGOGICAL_PAGES = [
 MONITOR_PAGE = "🔎 Carômetro de Segurança"
 
 BNCC_EXPERIENCES = (
-    "O eu, o outro e o nós",
-    "Corpo, gestos e movimentos",
-    "Traços, sons, cores e formas",
-    "Escuta, fala, pensamento e imaginação",
-    "Espaços, tempos, quantidades, relações e transformações",
+   BNCC_EXPERIENCES = (
+    "Corpo, gesto e movimento",
+    "Artes",
+    "Linguagem matemática",
+    "Linguagem verbal",
+    "Indivíduo e sociedade",
 )
 
 OCCURRENCE_TYPES = (
