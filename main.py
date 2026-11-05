@@ -56,14 +56,14 @@ PEDAGOGICAL_PAGES = [
     "🚨 Ocorrências da Rotina",
 ]
 MONITOR_PAGE = "🔎 Carômetro de Segurança"
-
-   BNCC_EXPERIENCES = (
+BNCC_EXPERIENCES = (
     "Corpo, gesto e movimento",
     "Artes",
     "Linguagem matemática",
     "Linguagem verbal",
-    "Indivíduo e sociedade",
+    "Indivíduo e sociedade"
 )
+
 
 OCCURRENCE_TYPES = (
     "Mordida/Arranhão",
