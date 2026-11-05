@@ -42,7 +42,8 @@ SALAS_CADASTRADAS = (
     "Segunda Etapa - Turma 2",
 )
 
-ESPACOS = ("Quadra", "Informática", "Leitura")
+# Atualizado conforme solicitado: Quadra, Biblioteca e Informática
+ESPACOS = ("Quadra", "Biblioteca", "Informática")
 STATUS_CHAMADA = ("Presente", "Falta", "Falta justificada")
 ADMIN_PAGE = "⚙️ Painel de Controle (Adm)"
 PEDAGOGICAL_PAGES = [
@@ -79,7 +80,7 @@ AREAS_PEDAGOGICAS = (
     "Indivíduo e sociedade",
     "Linguagens e tecnologias",
     "Artes",
-    "Cultura, corpo e movimento",
+    "Cultura, corpo e movemento",
 )
 
 MESES_DO_ANO = (
@@ -89,7 +90,6 @@ MESES_DO_ANO = (
 
 QUINZENAS = ("1ª Quinzena", "2ª Quinzena")
 TRIMESTRES = ("1º Trimestre", "2º Trimestre", "3º Trimestre")
-
 # =====================================================================
 # 2. CONEXÃO E GERENCIAMENTO DO BANCO DE DADOS (SQLITE3)
 # =====================================================================
@@ -242,9 +242,8 @@ def initialize_database() -> None:
             )
 
 initialize_database()
-
 # =====================================================================
-# 3. FUNÇÕES AUXILIARES DE SUPORTE
+# 3. FUNÇÕES AUXILIARES DE SUPORTE E DELEÇÃO
 # =====================================================================
 def fetch_all(query: str, parameters: tuple = ()) -> list[sqlite3.Row]:
     with connection_scope() as connection:
@@ -264,9 +263,21 @@ def delete_record(table_name: str, record_id: int) -> None:
     with connection_scope() as connection:
         connection.execute(f"DELETE FROM {table_name} WHERE id = ?", (record_id,))
 
+def delete_authorized_user(registry: str) -> None:
+    """Exclui permanentemente um funcionário do banco pelo código de matrícula."""
+    with connection_scope() as connection:
+        connection.execute("DELETE FROM authorized_users WHERE registry = ?", (registry.strip().lower(),))
+
+def delete_student_by_id(student_id: int) -> None:
+    """Exclui permanentemente um aluno limpando tabelas filhas para evitar erros de integridade."""
+    with connection_scope() as connection:
+        connection.execute("DELETE FROM attendance WHERE student_id = ?", (student_id,))
+        connection.execute("DELETE FROM occurrences WHERE student_id = ?", (student_id,))
+        connection.execute("UPDATE plans_minutes SET student_id = NULL WHERE student_id = ?", (student_id,))
+        connection.execute("DELETE FROM students WHERE id = ?", (student_id,))
+
 def classroom_rows() -> list[sqlite3.Row]:
-    rooms = fetch_all("SELECT id, name FROM classrooms")
-    return rooms
+    return fetch_all("SELECT id, name FROM classrooms")
 
 def classrooms_for_teacher(teacher: dict[str, str | int | None]) -> list[sqlite3.Row]:
     rooms = classroom_rows()
@@ -290,7 +301,6 @@ def decode_plan_content(content: str) -> dict:
 
 def registered_teacher_rows() -> list[sqlite3.Row]:
     return fetch_all("SELECT registry, full_name, role FROM authorized_users WHERE active = 1 ORDER BY full_name COLLATE NOCASE")
-
 # =====================================================================
 # 4. SISTEMA DE ESCRITA E GRAVAÇÃO DE DADOS (ALUNOS / ATAS / CHAMADA)
 # =====================================================================
@@ -425,6 +435,9 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
     </div>
     """
     return html_content
+# =====================================================================
+# 6. INTERFACES VISUAIS DO APLICATIVO (FUNÇÕES DE RENDERIZAÇÃO)
+# =====================================================================
 def render_login() -> None:
     st.title(APP_TITLE)
     st.subheader("Acesso ao sistema")
@@ -546,7 +559,6 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
                 key=f"print_{row['id']}", 
                 on_click=lambda h=html_content: st.html(f"<script>var win = window.open('', '_blank'); win.document.write({json.dumps(h)}); win.document.close(); win.print();</script>")
             )
-
 def render_assessment_calendar(teacher: dict[str, str]) -> None:
     st.subheader("📅 Calendário de Avaliações")
     rooms = classroom_rows()
@@ -616,14 +628,9 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
         if all_students:
             student_sel = st.selectbox("Selecione o Aluno para Consulta Completa:", [r["name"] for r in all_students])
             aluno_row = next(r for r in all_students if r["name"] == student_sel)
-            aluno = dict(aluno_row) # NOVO: Converte em dicionário seguro para evitar AttributeError
+            aluno = dict(aluno_row)
             
             st.markdown(f"### Ficha de Saúde Global: {aluno['name']}")
-            st.write(f"🔴 **Alergias:** {aluno.get('allergies','Nenhuma')}")
-            st.write(f"🥛 **Restrições:** {aluno.get('food_restrictions','Nenhuma')}")
-            st.write(f"🪪 **Retirada:** {aluno.get('authorized_pickup','Não informado')}")
-            st.write(f"📞 **Contato de Emergência:** {aluno.get('emergency_contact','Não informado')}")
-
             st.write(f"🔴 **Alergias:** {aluno.get('allergies','Nenhuma')}")
             st.write(f"🥛 **Restrições:** {aluno.get('food_restrictions','Nenhuma')}")
             st.write(f"🪪 **Retirada:** {aluno.get('authorized_pickup','Não informado')}")
@@ -635,7 +642,7 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
                 st.subheader("📁 Arquivos PDF Anexados no Prontuário Escolar")
                 for doc in pdfs:
                     with st.container(border=True):
-                        c1, c2 = st.columns([3, 1])
+                        c1, c2 = st.columns()
                         c1.write(f"📄 {doc['nome']} (Anexado em {doc['data']})")
                         if os.path.exists(doc["caminho"]):
                             with open(doc["caminho"], "rb") as f_pdf:
@@ -646,9 +653,45 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
                                     mime="application/pdf", 
                                     key=doc["caminho"]
                                 )
+
+def render_space_reservations(teacher: dict[str, str]) -> None:
+    st.subheader("🏢 Agendamento de Espaços Escolares")
+    st.write("Preencha os campos abaixo para reservar um ambiente.")
+
+    with st.form("formulario_agendamento", clear_on_submit=True):
+        local_opcao = st.selectbox("Selecione o Local desejado:", list(ESPACOS))
+        col1, col2 = st.columns(2)
+        with col1:
+            data_reserva = st.date_input("Data do Agendamento:", date.today())
+        with col2:
+            horario_reserva = st.selectbox(
+                "Horário / Período:",
+                ["07:30 às 08:20 (1º Tempo)", "08:20 às 09:10 (2º Tempo)", "09:30 às 10:20 (3º Tempo)", 
+                 "13:00 às 14:30 (Turno Tarde)", "14:30 às 16:00 (Turno Tarde)"]
+            )
+        rooms = classroom_rows()
+        turma_alvo = st.selectbox("Selecione a Turma que utilizará o espaço:", [row["name"] for row in rooms])
+        justificativa = st.text_area("Objetivo / Finalidade Pedagógica:")
+        botao_agendar = st.form_submit_button("Confirmar Agendamento", type="primary")
+
+    if botao_agendar:
+        if not justificativa.strip():
+            st.error("Por favor, preencha a finalidade pedagógica da reserva.")
+        else:
+            now_str = datetime.now().isoformat(timespec="minutes")
+            with connection_scope() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO reservations 
+                        (space, responsible, teacher_name, teacher_registry, teacher_email, group_name, reservation_date, start_time, end_time, purpose, created_at)
+                    VALUES (?, 'Professor', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (local_opcao, teacher["name"], teacher["registry"], teacher.get("email", ""), turma_alvo, str(data_reserva), horario_reserva, horario_reserva, justificativa, now_str)
+                )
+            st.success(f"🎟️ Sucesso! **{local_opcao}** reservada para o dia **{data_reserva.strftime('%d/%m/%Y')}** no período **{horario_reserva}**.")
 def render_admin_dashboard() -> None:
     st.header("⚙️ Painel Administrativo de Controle Geral")
-    aba_gerencia = st.radio("Escolha a Ação Administrativa:", ["👥 Cadastrar/Editar Funcionários", "👶 Matricular Novo Aluno no Carômetro"], horizontal=True)
+    aba_gerencia = st.radio("Escolha a Ação Administrativa:", ["👥 Cadastrar/Editar Funcionários", "👶 Matricular Novo Aluno no Carômetro", "🗑️ Excluir Alunos e Funcionários"], horizontal=True)
     rooms = classroom_rows()
     
     if aba_gerencia == "👥 Cadastrar/Editar Funcionários":
@@ -668,7 +711,7 @@ def render_admin_dashboard() -> None:
                     )
                 st.success("Funcionário integrado com sucesso!")
                 st.rerun()
-
+                
     elif aba_gerencia == "👶 Matricular Novo Aluno no Carômetro":
         with st.form("form_adm_aluno"):
             st.write("### Ficha de Matrícula e Saúde Geral Infantil")
@@ -683,8 +726,36 @@ def render_admin_dashboard() -> None:
                 if a_nome.strip():
                     sala_id = next(r["id"] for r in rooms if r["name"] == a_sala)
                     add_student(a_nome, sala_id, allergies=a_alergias, food_restrictions=a_restricoes, authorized_pickup=a_retirada, emergency_contact=a_contato)
-                    st.success("Criança matriculada e inserida de forma vitalícia no banco de dados!")
+                    st.success("Criança matriculada com sucesso!")
                     st.rerun()
+                    
+    elif aba_gerencia == "🗑️ Excluir Alunos e Funcionários":
+        st.subheader("Gerenciamento de Exclusões Permanentes")
+        tipo_excl = st.radio("Escolha quem remover:", ["Funcionários", "Alunos"], horizontal=True)
+        
+        if tipo_excl == "Funcionários":
+            usuarios = fetch_all("SELECT registry, full_name, role FROM authorized_users WHERE active = 1")
+            if usuarios:
+                dict_users = {f"{u['full_name']} ({u['role']}) - Reg: {u['registry']}": u['registry'] for u in usuarios}
+                sel = st.selectbox("Selecione para deletar:", list(dict_users.keys()))
+                if st.button("❌ Remover Funcionário Permanentemente", type="primary"):
+                    delete_authorized_user(dict_users[sel])
+                    st.success("Funcionário removido do sistema!")
+                    st.rerun()
+            else:
+                st.info("Nenhum funcionário ativo.")
+                
+        elif tipo_excl == "Alunos":
+            alunos = fetch_all("SELECT id, name, code FROM students")
+            if alunos:
+                dict_alunos = {f"Matrícula: {al['code']} - {al['name']}": al['id'] for al in alunos}
+                sel = st.selectbox("Selecione para deletar:", list(dict_alunos.keys()))
+                if st.button("❌ Remover Aluno Permanentemente", type="primary"):
+                    delete_student_by_id(dict_alunos[sel])
+                    st.error("Aluno apagado do sistema!")
+                    st.rerun()
+            else:
+                st.info("Nenhum aluno cadastrado.")
 
 # =====================================================================
 # 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS
@@ -700,32 +771,25 @@ else:
         st.rerun()
         
     st.sidebar.divider()
-      # 🚨 REGRA CRÍTICA DE EVASÃO: ALERTA VERMELHO DE BUSCA ATIVA PARA A DIREÇÃO
+    
     st.subheader("🚨 Central Escolar de Alertas Críticos (Evasão)")
-    evasao_rows = fetch_all(
-        """
-        SELECT students.name, students.classroom_id, students.faltas_consecutivas, students.emergency_contact
-        FROM students 
-        WHERE students.faltas_consecutivas >= 3
-        """
-    )
+    evasao_rows = fetch_all("SELECT name, faltas_consecutivas, emergency_contact FROM students WHERE faltas_consecutivas >= 3")
     if evasao_rows:
         for ev in evasao_rows:
-            st.error(f"⚠️ **RISCO DE EVASÃO DETECTADO:** A criança **{ev['name']}** acumulou {ev['faltas_consecutivas']} faltas consecutivas! Telefone de contato dos pais para busca ativa imediata: {ev['emergency_contact']}")
+            st.error(f"⚠️ **RISCO DE EVASÃO:** {ev['name']} acumulou {ev['faltas_consecutivas']} faltas consecutivas! Contato: {ev['emergency_contact']}")
     else:
         st.success("✅ Nenhuma evasão detectada nas salas de Educação Infantil.")
     st.divider()
-  
 
-    # Roteamento administrativo ou pedagógico com base no cargo autenticado
     if prof["role"] == "Administrador":
         menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + PEDAGOGICAL_PAGES)
         if menu_escolha == ADMIN_PAGE: render_admin_dashboard()
-        elif menu_escolha == "📢 Quadro de Aviso": render_announcements()
+        elif menu_escolha == "📢 Quadro de Avisos": render_announcements()
         elif menu_escolha == "📋 Chamada Diária": render_daily_attendance(prof)
         elif menu_escolha == "📝 Planejamentos & Atas de Conselho": render_minutes_and_plans(prof)
         elif menu_escolha == "📅 Calendário de Avaliações": render_assessment_calendar(prof)
         elif menu_escolha == "🧒 Carômetro e Histórico de Alunos": render_aee_and_pdf_uploads(prof)
+        elif menu_escolha == "🏢 Agendamento de Espaços": render_space_reservations(prof)
         else: st.info("Módulo pedagógico em desenvolvimento estrutural.")
         
     elif prof["role"] == "Professor":
@@ -735,85 +799,9 @@ else:
         elif menu_escolha == "📝 Planejamentos & Atas de Conselho": render_minutes_and_plans(prof)
         elif menu_escolha == "📅 Calendário de Avaliações": render_assessment_calendar(prof)
         elif menu_escolha == "🧒 Carômetro e Histórico de Alunos": render_aee_and_pdf_uploads(prof)
-        else: st.info("Acesse a aba selecionada na barra lateral para iniciar os lançamentos da rotina.")
+        elif menu_escolha == "🏢 Agendamento de Espaços": render_space_reservations(prof)
+        else: st.info("Acesse a aba selecionada na barra lateral.")
         
     elif prof["role"] == "Monitor":
         st.title(MONITOR_PAGE)
         render_aee_and_pdf_uploads(prof)
-import streamlit as st
-import datetime
-
-# --- SEU MENU LATERAL EXISTENTE ---
-# Certifique-se de que a sua lista de navegação original contém exatamente os nomes das opções
-# Vamos adicionar "Excluir Registros" na lista que você já tinha.
-opcao_menu = st.sidebar.radio(
-    "Navegar para:",
-    [
-        "Painel de Controle (Adm)", 
-        "Quadro de Avisos", 
-        "Chamada Diária", 
-        "Carômetro e Histórico de Alunos",
-        "Planejamentos & Atas de Conselho",
-        "Calendário de Avaliações",
-        "Agendamento de Espaços",  # <--- Integrando a tela que você já tinha
-        "Ocorrências da Rotina",
-        "Excluir Registros"         # <--- Adicionando a nova opção no menu único
-    ]
-)
-
-# --- INTEGRAÇÃO DA TELA DE AGENDAMENTO (Na opção que você já tinha) ---
-if opcao_menu == "Agendamento de Espaços":
-    st.subheader("📅 Agendamento de Espaços Escolares")
-    
-    with st.form("formulario_agendamento"):
-        local_opcao = st.selectbox(
-            "Selecione o Local desejado:",
-            ["Quadra Poliesportiva", "Biblioteca Central", "Laboratório de Informática"]
-        )
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            data_reserva = st.date_input("Data do Agendamento:", datetime.date.today())
-        with col2:
-            horario_reserva = st.selectbox(
-                "Horário / Período:",
-                ["07:30 às 08:20 (1º Tempo)", "08:20 às 09:10 (2º Tempo)", "09:30 às 10:20 (3º Tempo)"]
-            )
-            
-        professor_responsavel = st.text_input("Nome do Professor Responsável:")
-        botao_agendar = st.form_submit_button("Confirmar Agendamento")
-
-    if botao_agendar:
-        if professor_responsavel == "":
-            st.warning("Por favor, preencha o nome do responsável.")
-        else:
-            # Aqui vai o seu código de salvar dados
-            st.success(f"Sucesso! **{local_opcao}** reservada para o dia **{data_reserva.strftime('%d/%m/%Y')}**.")
-
-
-# --- INTEGRAÇÃO DA TELA DE EXCLUSÃO (Nova opção adicionada ao menu principal) ---
-elif opcao_menu == "Excluir Registros":
-    st.subheader("🗑️ Gerenciamento de Exclusões")
-    
-    aba_func, aba_aluno = st.tabs(["Excluir Funcionários", "Excluir Alunos"])
-    
-    with aba_func:
-        lista_funcionarios = ["Professor João Silva", "Administradora Ana Souza"] # Puxe do seu banco de dados
-        func_selecionado = st.selectbox("Selecione o Funcionário para excluir:", lista_funcionarios)
-        if st.button(f"Excluir {func_selecionado}", type="primary"):
-            st.success(f"Funcionário removido!")
-            
-    with aba_aluno:
-        lista_alunos = ["1001 - Bruno Costa", "1002 - Mariana Lima"] # Puxe do seu banco de dados
-        aluno_selecionado = st.selectbox("Selecione o Aluno para excluir:", lista_alunos)
-        if st.button(f"Excluir {aluno_selecionado}", type="primary"):
-            st.error(f"Matrícula excluída!")
-
-# --- COLOQUE AS OUTRAS TELAS ABAIXO CONFORME SEU CÓDIGO ORIGINAL ---
-elif opcao_menu == "Painel de Controle (Adm)":
-    # Seu código original do Painel de Controle aqui...
-    pass
-
-elif opcao_menu == "Quadro de Avisos":
-    # Seu código original do Quadro de Avisos aqui...
-    pass
