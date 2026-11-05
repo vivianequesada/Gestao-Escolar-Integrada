@@ -547,10 +547,10 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
         with st.form("form_ata_materias", clear_on_submit=True):
             trimestre = st.selectbox("Trimestre Letivo:", TRIMESTRES)
             st.write("### Deliberações Separadas por Matéria:")
-# Dentro do st.form da Ata de Conselho na sua função render_minutes_and_plans:
-reports = {}
-for area in BNCC_EXPERIENCES:  # <-- Garanta que está BNCC_EXPERIENCES aqui!
-    reports[area] = st.text_area(f"📌 Parecer Coletivo: {area}")
+    # Dentro do st.form da Ata de Conselho na sua função render_minutes_and_plans:
+             reports = {}
+            for area in BNCC_EXPERIENCES:  # <-- Garanta que está BNCC_EXPERIENCES aqui!
+                reports[area] = st.text_area(f"📌 Parecer Coletivo: {area}")
 
 
                 
