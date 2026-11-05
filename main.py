@@ -805,7 +805,7 @@ else:
 
    def render_occurrences(teacher: dict[str, str]) -> None:
     st.subheader("🚨 Registro de Ocorrências da Rotina")
-    st.write("Utilize este formulário para relatar incidentes, episódios de saúde ou indisposições.")
+        st.write("Utilize este formulário para relatar incidentes, episódios de saúde ou indisposições.")
 
     # Busca todos os alunos cadastrados para preencher o selectbox
     all_students = fetch_all("SELECT id, name, code FROM students WHERE active = 1 ORDER BY name")
