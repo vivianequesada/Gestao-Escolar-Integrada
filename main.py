@@ -534,29 +534,55 @@ def render_daily_attendance(teacher: dict[str, str]) -> None:
         save_attendance(statuses, attendance_date, teacher)
         st.success("Frequência enviada e consolidada no histórico escolar!")
         st.rerun()
-def render_minutes_and_plans(teacher: dict[str, str]) -> None:
-    st.subheader("📝 Gestão de Atas por Matéria e Planejamentos")
-    rooms = classrooms_for_teacher(teacher)
-    room_names = [row["name"] for row in rooms]
-    selected_room = st.selectbox("Selecione a Sala:", room_names, key="plan_room")
-    classroom_id = next(row["id"] for row in rooms if row["name"] == selected_room)
+def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> str:
+    payload = decode_plan_content(row["content"])
+    subject_reports = payload.get("subject_reports", {})
     
-    tipo_registro = st.radio("Selecione o Tipo de Operação:", ["Atas de Conselho", "Planejamento Pedagógico"], horizontal=True)
-
-    if tipo_registro == "Atas de Conselho":
-        with st.form("form_ata_materias", clear_on_submit=True):
-            trimestre = st.selectbox("Trimestre Letivo:", TRIMESTRES)
-            st.write("### Deliberações Separadas por Matéria:")
-            
-            reports = {}
-            for area in BNCC_EXPERIENCES:
-                reports[area] = st.text_area(f"📌 Parecer Coletivo: {area}")
-                
-            if st.form_submit_button("📝 Protocolar e Consolidar Ata"):
-                content_json = json.dumps({"subject_reports": reports})
-                save_plan_or_minutes("Ata", date.today(), classroom_id, "Geral", f"Conselho de Classe {trimestre}", content_json, teacher, trimester=trimestre)
-                st.success("Ata protocolada!")
-                st.rerun()
+    subject_sections = ""
+    
+    # Se houver um dicionário de matérias salvo, renderiza cada uma delas dinamicamente
+    if isinstance(subject_reports, dict) and subject_reports:
+        for area, text in subject_reports.items():
+            subject_sections += (
+                f"<div style='margin-bottom: 15px;'><b>📌 Componente: {html.escape(area)}</b>"
+                f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(str(text))}</p></div>"
+            )
+    else:
+        # Caso seja um texto legado ou formato antigo, joga o conteúdo direto para não quebrar
+        legacy_text = payload.get("legacy_text", str(row["content"]))
+        subject_sections = (
+            f"<div style='margin-bottom: 15px;'><b>📌 Conteúdo do Registro:</b>"
+            f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(legacy_text)}</p></div>"
+        )
+    
+    # Gera os campos para TODOS os professores e administradores ativos assinarem
+    signatures = []
+    for row_teacher in teachers:
+        if row_teacher["role"] in ["Professor", "Administrador"]:
+            signatures.append(
+                f"<div style='margin-bottom: 25px; display: inline-block; width: 45%; min-width: 280px; margin-right: 4%; vertical-align: top;'>"
+                f"<p style='margin: 0;'>____________________________________</p>"
+                f"<p style='margin: 3px 0 0 0; font-size: 11px; color: #333;'>✍️ <b>{html.escape(row_teacher['full_name'].upper())}</b> ({html.escape(row_teacher['role'])})</p>"
+                f"</div>"
+            )
+    signatures_html = "".join(signatures)
+    
+    trimester = row["trimester"] if row["trimester"] else "Conselho de Classe"
+    
+    html_content = f"""
+    <div id="documento-ata-{row['id']}" style="border: 2px solid #333; padding: 30px; background-color: #fff; color: #111; font-family: 'Courier New', monospace; max-width: 800px; margin: auto;">
+        <h2 style="text-align: center; margin-bottom: 5px; font-size: 20px;">ATA DE CONSELHO DE CLASSE CONSOLIDADA</h2>
+        <p style="text-align: center; font-size: 14px; margin-top: 0;"><b>{html.escape(trimester.upper())}</b> | TURMA: {html.escape(row['classroom'] if row['classroom'] else 'Geral').upper()}</p>
+        <p style="font-size: 13px;"><b>Coordenador Responsável:</b> {html.escape(row['teacher_name'])}</p>
+        <hr style="border-top: 1px solid #333; margin-bottom: 20px;">
+        {subject_sections}
+        <br><hr style="border-top: 1px solid #333;"><h4 style='margin-bottom: 15px;'>✍️ CAMPOS PARA ASSINATURA DA EQUIPE ESCOLAR:</h4>
+        <div style='margin-top: 15px;'>
+        {signatures_html}
+        </div>
+    </div>
+    """
+    return html_content
 
                 
     elif tipo_registro == "Planejamento Pedagógico":
