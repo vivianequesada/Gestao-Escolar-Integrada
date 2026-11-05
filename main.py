@@ -741,85 +741,79 @@ else:
         st.title(MONITOR_PAGE)
         render_aee_and_pdf_uploads(prof)
 import streamlit as st
-
-st.title("🗑️ Gerenciamento de Exclusões")
-
-# Criando duas abas internas para separar os alvos
-aba_func, aba_aluno = st.tabs(["Excluir Funcionários", "Excluir Alunos"])
-
-with aba_func:
-    st.subheader("Remover Funcionário do Sistema")
-    
-    # Exemplo: Substitua esta lista pela consulta ao seu banco de dados
-    lista_funcionarios = ["Professor João Silva", "Administradora Ana Souza", "Coordenador Carlos Medeiros"]
-    
-    func_selecionado = st.selectbox("Selecione o Funcionário para excluir:", lista_funcionarios, key="del_func")
-    
-    # Botão de confirmação com cor de aviso (red) usando a estilização nativa do Streamlit
-    if st.button(f"Excluir {func_selecionado}", type="primary", key="btn_del_func"):
-        # >>> AQUI: Insira sua lógica de exclusão do banco de dados (ex: DELETE FROM ...) <<<
-        st.success(f"O funcionário '{func_selecionado}' foi removido com sucesso!")
-
-with aba_aluno:
-    st.subheader("Remover Aluno do Sistema")
-    
-    # Exemplo: Substitua esta lista pela consulta ao seu banco de dados
-    lista_alunos = ["1001 - Bruno Costa", "1002 - Mariana Lima", "1003 - Pedro Rocha"]
-    
-    aluno_selecionado = st.selectbox("Selecione o Aluno para excluir:", lista_alunos, key="del_aluno")
-    
-    if st.button(f"Excluir {aluno_selecionado}", type="primary", key="btn_del_aluno"):
-        # >>> AQUI: Insira sua lógica de exclusão do banco de dados <<<
-        st.error(f"A matrícula '{aluno_selecionado}' foi excluída do sistema.")
-import streamlit as st
 import datetime
 
-st.title("📅 Agendamento de Espaços Escolares")
-st.write("Preencha os campos abaixo para reservar um local na instituição.")
+# --- SEU MENU LATERAL EXISTENTE ---
+# Certifique-se de que a sua lista de navegação original contém exatamente os nomes das opções
+# Vamos adicionar "Excluir Registros" na lista que você já tinha.
+opcao_menu = st.sidebar.radio(
+    "Navegar para:",
+    [
+        "Painel de Controle (Adm)", 
+        "Quadro de Avisos", 
+        "Chamada Diária", 
+        "Carômetro e Histórico de Alunos",
+        "Planejamentos & Atas de Conselho",
+        "Calendário de Avaliações",
+        "Agendamento de Espaços",  # <--- Integrando a tela que você já tinha
+        "Ocorrências da Rotina",
+        "Excluir Registros"         # <--- Adicionando a nova opção no menu único
+    ]
+)
 
-# Criando um formulário para agrupar as ações de envio
-with st.form("formulario_agendamento"):
+# --- INTEGRAÇÃO DA TELA DE AGENDAMENTO (Na opção que você já tinha) ---
+if opcao_menu == "Agendamento de Espaços":
+    st.subheader("📅 Agendamento de Espaços Escolares")
     
-    # 1. Seleção do Local conforme solicitado
-    local_opcao = st.selectbox(
-        "Selecione o Local desejado:",
-        ["Quadra Poliesportiva", "Biblioteca Central", "Laboratório de Informática"]
-    )
-    
-    # Colunas lado a lado para otimizar espaço de Data e Horário
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # 2. Entrada de Data
-        data_reserva = st.date_input("Data do Agendamento:", datetime.date.today())
-        
-    with col2:
-        # 3. Entrada de Horário (Pode usar selectbox com os blocos de aula ou st.time_input)
-        horario_reserva = st.selectbox(
-            "Horário / Período:",
-            ["07:30 às 08:20 (1º Tempo)", "08:20 às 09:10 (2º Tempo)", "09:30 às 10:20 (3º Tempo)", 
-             "13:00 às 14:30 (Turno Tarde)", "14:30 às 16:00 (Turno Tarde)"]
+    with st.form("formulario_agendamento"):
+        local_opcao = st.selectbox(
+            "Selecione o Local desejado:",
+            ["Quadra Poliesportiva", "Biblioteca Central", "Laboratório de Informática"]
         )
         
-    # Campo extra opcional para identificar o responsável
-    professor_responsavel = st.text_input("Nome do Professor Responsável:")
+        col1, col2 = st.columns(2)
+        with col1:
+            data_reserva = st.date_input("Data do Agendamento:", datetime.date.today())
+        with col2:
+            horario_reserva = st.selectbox(
+                "Horário / Período:",
+                ["07:30 às 08:20 (1º Tempo)", "08:20 às 09:10 (2º Tempo)", "09:30 às 10:20 (3º Tempo)"]
+            )
+            
+        professor_responsavel = st.text_input("Nome do Professor Responsável:")
+        botao_agendar = st.form_submit_button("Confirmar Agendamento")
+
+    if botao_agendar:
+        if professor_responsavel == "":
+            st.warning("Por favor, preencha o nome do responsável.")
+        else:
+            # Aqui vai o seu código de salvar dados
+            st.success(f"Sucesso! **{local_opcao}** reservada para o dia **{data_reserva.strftime('%d/%m/%Y')}**.")
+
+
+# --- INTEGRAÇÃO DA TELA DE EXCLUSÃO (Nova opção adicionada ao menu principal) ---
+elif opcao_menu == "Excluir Registros":
+    st.subheader("🗑️ Gerenciamento de Exclusões")
     
-    # Botão de envio do formulário
-    botao_agendar = st.form_submit_button("Confirmar Agendamento", type="secondary")
+    aba_func, aba_aluno = st.tabs(["Excluir Funcionários", "Excluir Alunos"])
+    
+    with aba_func:
+        lista_funcionarios = ["Professor João Silva", "Administradora Ana Souza"] # Puxe do seu banco de dados
+        func_selecionado = st.selectbox("Selecione o Funcionário para excluir:", lista_funcionarios)
+        if st.button(f"Excluir {func_selecionado}", type="primary"):
+            st.success(f"Funcionário removido!")
+            
+    with aba_aluno:
+        lista_alunos = ["1001 - Bruno Costa", "1002 - Mariana Lima"] # Puxe do seu banco de dados
+        aluno_selecionado = st.selectbox("Selecione o Aluno para excluir:", lista_alunos)
+        if st.button(f"Excluir {aluno_selecionado}", type="primary"):
+            st.error(f"Matrícula excluída!")
 
-if botao_agendar:
-    if professor_responsavel == "":
-        st.warning("Por favor, preencha o nome do responsável pelo agendamento.")
-    else:
-        # >>> AQUI: Insira o código para salvar o agendamento no seu banco de dados <<<
-        st.success(f"Sucesso! **{local_opcao}** reservada para dia **{data_reserva.strftime('%d/%m/%Y')}** no horário **{horario_reserva}**.")
-# Exemplo de como deve estar a estrutura do seu menu lateral:
-opcao_menu = st.sidebar.radio("Navegar para:", ["Painel de Controle (Adm)", "Agendamento de Espaços", "Excluir Registros"])
-
-if opcao_menu == "Excluir Registros":
-    # Cole aqui o código da parte 1
+# --- COLOQUE AS OUTRAS TELAS ABAIXO CONFORME SEU CÓDIGO ORIGINAL ---
+elif opcao_menu == "Painel de Controle (Adm)":
+    # Seu código original do Painel de Controle aqui...
     pass
 
-elif opcao_menu == "Agendamento de Espaços":
-    # Cole aqui o código da parte 2
+elif opcao_menu == "Quadro de Avisos":
+    # Seu código original do Quadro de Avisos aqui...
     pass
