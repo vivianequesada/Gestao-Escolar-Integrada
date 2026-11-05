@@ -542,8 +542,8 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
     classroom_id = next(row["id"] for row in rooms if row["name"] == selected_room)
     
     tipo_registro = st.radio("Selecione o Tipo de Operação:", ["Atas de Conselho", "Planejamento Pedagógico"], horizontal=True)
-    
-       if tipo_registro == "Atas de Conselho":
+
+    if tipo_registro == "Atas de Conselho":
         with st.form("form_ata_materias", clear_on_submit=True):
             trimestre = st.selectbox("Trimestre Letivo:", TRIMESTRES)
             st.write("### Deliberações Separadas por Matéria:")
