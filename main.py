@@ -802,8 +802,9 @@ else:
     else:
         st.success("✅ Nenhuma evasão detectada nas salas de Educação Infantil.")
     st.divider()
-    # =====================================================================
-# 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS (CORRIGIDO)
+
+# =====================================================================
+# 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS
 # =====================================================================
 if "teacher_profile" not in st.session_state:
     render_login()
@@ -811,7 +812,7 @@ else:
     prof = st.session_state["teacher_profile"]
     st.sidebar.markdown(f"### 👤 {prof['name']}")
     st.sidebar.caption(f"Cargo: {prof['role']} | Acesso: {prof['registry']}")
-    if st.sidebar.button("🚪 Sair do Sistema"):
+    if st.sidebar.button("🚪 Sair do Sistema", key="btn_sair_unico"):
         del st.session_state["teacher_profile"]
         st.rerun()
         
@@ -827,7 +828,6 @@ else:
         st.success("✅ Nenhuma evasão detectada nas salas de Educação Infantil.")
     st.divider()
 
-    # Criando a lista de páginas de forma limpa e idêntica para o rádio e para as condições
     paginas_menu = [
         "📢 Quadro de Avisos",
         "📋 Chamada Diária",
@@ -840,8 +840,7 @@ else:
 
     # Roteamento administrativo ou pedagógico com base no cargo autenticado
     if prof["role"] == "Administrador":
-        # Junta o Painel Adm no topo da lista
-        menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + paginas_menu)
+        menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + paginas_menu, key="radio_menu_adm")
         
         if menu_escolha == ADMIN_PAGE: 
             render_admin_dashboard()
@@ -863,7 +862,7 @@ else:
             st.info("Módulo pedagógico em desenvolvimento estrutural.")
         
     elif prof["role"] == "Professor":
-        menu_escolha = st.sidebar.radio("Navegar para:", paginas_menu)
+        menu_escolha = st.sidebar.radio("Navegar para:", paginas_menu, key="radio_menu_prof")
         
         if menu_escolha == "📢 Quadro de Avisos": 
             render_announcements()
@@ -885,4 +884,3 @@ else:
     elif prof["role"] == "Monitor":
         st.title(MONITOR_PAGE)
         render_aee_and_pdf_uploads(prof)
-
