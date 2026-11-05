@@ -522,7 +522,6 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
     selected_room = st.selectbox("Selecione a Sala:", room_names, key="plan_room")
     classroom_id = next(row["id"] for row in rooms if row["name"] == selected_room)
     
-    # Seletor de Abas para separar Atas de Planejamentos sem quebrar o layout anterior
     tipo_registro = st.radio("Selecione o Tipo de Operação:", ["Atas de Conselho", "Planejamento Pedagógico"], horizontal=True)
     
     if tipo_registro == "Atas de Conselho":
@@ -547,7 +546,8 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
                 quin_plan = st.selectbox("Quinzena:", QUINZENAS)
             with col2:
                 mes_plan = st.selectbox("Mês de Referência:", MESES_DO_ANO)
-                bncc_plan = st.selectbox("Campo de Experiência (BNCC):", BNCC_EXPERIENCES)
+                # Puxa dinamicamente as novas matérias que você definiu na tupla BNCC_EXPERIENCES
+                bncc_plan = st.selectbox("Campo de Experiência:", BNCC_EXPERIENCES)
                 
             titulo_plan = st.text_input("Título do Planejamento:")
             conteudo_plan = st.text_area("Detalhamento das Atividades e Vivências:")
@@ -578,11 +578,12 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
                 )
             else:
                 st.markdown(f"##### 📅 Planejamento: {row['title']}")
-                st.caption(f"Mês: {row['month_name']} | {row['quinzena']} | Campo BNCC: {row['subject']}")
+                st.caption(f"Mês: {row['month_name']} | {row['quinzena']} | Matéria: {row['subject']}")
                 st.write(row["content"])
                 if st.button("Excluir Documento", key=f"del_doc_rec_{row['id']}"):
                     delete_record("plans_minutes", row["id"])
                     st.rerun()
+
 
 def render_assessment_calendar(teacher: dict[str, str]) -> None:
     st.subheader("📅 Calendário de Avaliações")
