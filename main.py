@@ -57,7 +57,6 @@ PEDAGOGICAL_PAGES = [
 ]
 MONITOR_PAGE = "🔎 Carômetro de Segurança"
 
-BNCC_EXPERIENCES = (
    BNCC_EXPERIENCES = (
     "Corpo, gesto e movimento",
     "Artes",
