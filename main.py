@@ -405,64 +405,6 @@ def save_announcement(title: str, category: str, audience: str, body: str) -> No
 # =====================================================================
 # 5. GERADORES DE TEMPLATES VISUAIS EM HTML (IMPRESSÃO DA ATA)
 # =====================================================================
-def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> str:
-    # Transforma o registro em um dicionário comum para aceitar consultas seguras (.get)
-    row_dict = dict(row)
-    
-    payload = decode_plan_content(row_dict.get("content", "{}"))
-    subject_reports = payload.get("subject_reports", {})
-    
-    subject_sections = ""
-    
-    # Se houver um dicionário de matérias salvo, renderiza cada uma delas dinamicamente
-    if isinstance(subject_reports, dict) and subject_reports:
-        for area, text in subject_reports.items():
-            subject_sections += (
-                f"<div style='margin-bottom: 15px;'><b>📌 Componente: {html.escape(str(area))}</b>"
-                f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(str(text))}</p></div>"
-            )
-    else:
-        # Caso seja um formato antigo ou legado, joga o conteúdo direto para não quebrar
-        legacy_text = payload.get("legacy_text", str(row_dict.get("content", "")))
-        subject_sections = (
-            f"<div style='margin-bottom: 15px;'><b>📌 Conteúdo do Registro:</b>"
-            f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(legacy_text)}</p></div>"
-        )
-    
-    # Gera os campos para TODOS os professores e administradores ativos assinarem
-    signatures = []
-    for row_teacher in teachers:
-        teacher_dict = dict(row_teacher)
-        if teacher_dict.get("role") in ["Professor", "Administrador"]:
-            signatures.append(
-                f"<div style='margin-bottom: 25px; display: inline-block; width: 45%; min-width: 280px; margin-right: 4%; vertical-align: top;'>"
-                f"<p style='margin: 0;'>____________________________________</p>"
-                f"<p style='margin: 3px 0 0 0; font-size: 11px; color: #333;'>✍️ <b>{html.escape(str(teacher_dict.get('full_name', '')).upper())}</b> ({html.escape(str(teacher_dict.get('role', ''))).upper()})</p>"
-                f"</div>"
-            )
-    signatures_html = "".join(signatures)
-    
-    # Consultas 100% seguras que evitam IndexError
-    trimester_val = row_dict.get("trimester") if row_dict.get("trimester") else "Conselho de Classe"
-    classroom_val = row_dict.get("classroom") if row_dict.get("classroom") else "Geral"
-    teacher_name_val = row_dict.get("teacher_name") if row_dict.get("teacher_name") else "Não informado"
-    row_id_val = row_dict.get("id", 0)
-    
-    html_content = f"""
-    <div id="documento-ata-{row_id_val}" style="border: 2px solid #333; padding: 30px; background-color: #fff; color: #111; font-family: 'Courier New', monospace; max-width: 800px; margin: auto;">
-        <h2 style="text-align: center; margin-bottom: 5px; font-size: 20px;">ATA DE CONSELHO DE CLASSE CONSOLIDADA</h2>
-        <p style="text-align: center; font-size: 14px; margin-top: 0;"><b>{html.escape(str(trimester_val).upper())}</b> | TURMA: {html.escape(str(classroom_val)).upper()}</p>
-        <p style="font-size: 13px;"><b>Coordenador Responsible:</b> {html.escape(str(teacher_name_val))}</p>
-        <hr style="border-top: 1px solid #333; margin-bottom: 20px;">
-        {subject_sections}
-        <br><hr style="border-top: 1px solid #333;"><h4 style='margin-bottom: 15px;'>✍️ CAMPOS PARA ASSINATURA DA EQUIPE ESCOLAR:</h4>
-        <div style='margin-top: 15px;'>
-        {signatures_html}
-        </div>
-    </div>
-    """
-    return html_content
-
 
 # =====================================================================
 # 6. INTERFACES VISUAIS DO APLICATIVO (FUNÇÕES DE RENDERIZAÇÃO)
