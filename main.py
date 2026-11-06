@@ -567,7 +567,7 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
             )
     signatures_html = "".join(signatures)
     
-        trimester = row["trimester"] if row["trimester"] else "Conselho de Classe"
+    trimester = row["trimester"] if row["trimester"] else "Conselho de Classe"
     
     html_content = f"""
     <div id="documento-ata-{row['id']}" style="border: 2px solid #333; padding: 30px; background-color: #fff; color: #111; font-family: 'Courier New', monospace; max-width: 800px; margin: auto;">
