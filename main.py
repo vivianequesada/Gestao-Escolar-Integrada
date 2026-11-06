@@ -665,17 +665,26 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
     
     if aba_aee == "Anexar Arquivo PDF Externo / Laudo":
         all_students = fetch_all("SELECT id, name FROM students WHERE active = 1")
-        student_sel = st.selectbox("Selecione o Aluno para Vincular o PDF:", [r["name"] for r in all_students])
-        arquivo_enviado = st.file_uploader("Escolha o arquivo PDF do Laudo/PEI:", type=["pdf"])
-        nome_doc = st.text_input("Identificação do Documento (Ex: Laudo Fonoaudiologia 2026):")
         
-        if st.button("➕ Enviar e Salvar PDF no Prontuário"):
-            if arquivo_enviado is not None and nome_doc.strip():
-                # Sanitiza o nome para evitar problemas de caminhos com espaços
+        # Criando o formulário para travar o carregamento infinito do arquivo
+        with st.form("form_upload_laudo_pdf", clear_on_submit=True):
+            student_sel = st.selectbox("Selecione o Aluno para Vincular o PDF:", [r["name"] for r in all_students])
+            arquivo_enviado = st.file_uploader("Escolha o arquivo PDF do Laudo/PEI:", type=["pdf"])
+            nome_doc = st.text_input("Identificação do Documento (Ex: Laudo Fonoaudiologia 2026):")
+            
+            botao_enviar = st.form_submit_button("➕ Enviar e Salvar PDF no Prontuário", type="primary")
+        
+        if botao_enviar:
+            if arquivo_enviado is None:
+                st.error("Por favor, selecione um arquivo PDF para enviar.")
+            elif not nome_doc.strip():
+                st.error("Por favor, digite uma identificação para o documento.")
+            else:
+                # Sanitiza o nome do arquivo para evitar quebras de caminhos
                 nome_limpo = f"{student_sel.replace(' ', '')}_{nome_doc.replace(' ', '_')}.pdf"
                 caminho_salvamento = os.path.join(str(UPLOAD_DIR), nome_limpo)
                 
-                # CORREÇÃO: Lê os bytes diretamente do arquivo enviado usando .read()
+                # Lê os bytes de forma segura pós-envio do formulário
                 bytes_data = arquivo_enviado.read()
                 with open(caminho_salvamento, "wb") as f:
                     f.write(bytes_data)
@@ -709,7 +718,7 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
                 st.subheader("📁 Arquivos PDF Anexados no Prontuário Escolar")
                 for doc in pdfs:
                     with st.container(border=True):
-                        c1, c2 = st.columns([3, 1])
+                        c1, c2 = st.columns()
                         c1.write(f"📄 {doc['nome']} (Anexado em {doc['data']})")
                         if os.path.exists(doc["caminho"]):
                             with open(doc["caminho"], "rb") as f_pdf:
@@ -865,19 +874,25 @@ def render_occurrences(teacher: dict[str, str]) -> None:
 
 def render_admin_dashboard() -> None:
     st.header("⚙️ Painel Administrativo de Controle Geral")
-    aba_gerencia = st.radio("Escolha a Ação Administrativa:", ["👥 Cadastrar/Editar Funcionários", "👶 Matricular Novo Aluno no Carômetro", "🗑️ Excluir Alunos e Funcionários"], horizontal=True)
+    
+    # ADICIONADO: "📊 Relatório Geral de Chamadas" na listagem horizontal de ações adm
+    aba_gerencia = st.radio(
+        "Escolha a Ação Administrativa:", 
+        ["👥 Cadastrar/Editar Funcionários", "👶 Matricular Novo Aluno no Carômetro", "🗑️ Excluir Alunos e Funcionários", "📊 Relatório Geral de Chamadas"], 
+        horizontal=True
+    )
     rooms = classroom_rows()
     
     if aba_gerencia == "👥 Cadastrar/Editar Funcionários":
+        # ... (mantenha o seu código de cadastro de funcionário intacto aqui)
         with st.form("form_add_teacher"):
             st.write("### Vincular Nova Matrícula Autorizada")
             t_mat = st.text_input("Matrícula (Código de Acesso)")
             t_nome = st.text_input("Nome Completo")
-            t_email = st.text_input("E-mail Institucional / Corporativo") # <-- ADICIONADO: Campo de E-mail
+            t_email = st.text_input("E-mail Institucional / Corporativo")
             t_cargo = st.selectbox("Cargo Escolar:", ["Professor", "Monitor", "Administrador"])
             t_type = st.selectbox("Segmento (Se Professor):", ["Regular", "AEE"])
             t_sala = st.selectbox("Sala Atribuída:", [r["name"] for r in rooms])
-            
             if st.form_submit_button("➕ Salvar Funcionário"):
                 if not t_mat.strip() or not t_nome.strip():
                     st.error("Por favor, preencha a Matrícula e o Nome Completo.")
@@ -885,7 +900,6 @@ def render_admin_dashboard() -> None:
                     sala_id = next(r["id"] for r in rooms if r["name"] == t_sala)
                     with connection_scope() as conn:
                         conn.execute(
-                            # Atualizado: Agora injeta a variável t_email no lugar correto do banco
                             "INSERT OR IGNORE INTO authorized_users (registry, role, full_name, email, teacher_type, classroom_id, active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
                             (t_mat.strip().lower(), t_cargo, t_nome.strip(), t_email.strip().lower(), t_type, sala_id, datetime.now().isoformat(timespec="minutes"))
                         )
@@ -893,15 +907,14 @@ def render_admin_dashboard() -> None:
                     st.rerun()
                 
     elif aba_gerencia == "👶 Matricular Novo Aluno no Carômetro":
+        # ... (mantenha o seu código de cadastro de aluno intacto aqui)
         with st.form("form_adm_aluno"):
-            st.write("### Ficha de Matrícula e Saúde Geral Infantil")
             a_nome = st.text_input("Nome Completo da Criança:")
             a_sala = st.selectbox("Sala Escolar:", [r["name"] for r in rooms])
             a_alergias = st.text_input("Alergias / Restrições Médicas:", value="Nenhuma")
             a_restricoes = st.text_input("Restrições Alimentares (Ex: Lactose):", value="Nenhuma")
             a_retirada = st.text_input("Pessoas Autorizadas para Retirada (Nome/Parentesco):")
             a_contato = st.text_input("Telefones de Emergência dos Pais:")
-            
             if st.form_submit_button("➕ Gravar e Matricular"):
                 if a_nome.strip():
                     sala_id = next(r["id"] for r in rooms if r["name"] == a_sala)
@@ -910,9 +923,9 @@ def render_admin_dashboard() -> None:
                     st.rerun()
                     
     elif aba_gerencia == "🗑️ Excluir Alunos e Funcionários":
+        # ... (mantenha o seu código de exclusão intacto aqui)
         st.subheader("Gerenciamento de Exclusões Permanentes")
         tipo_excl = st.radio("Escolha quem remover:", ["Funcionários", "Alunos"], horizontal=True)
-        
         if tipo_excl == "Funcionários":
             usuarios = fetch_all("SELECT registry, full_name, role FROM authorized_users WHERE active = 1")
             if usuarios:
@@ -922,9 +935,6 @@ def render_admin_dashboard() -> None:
                     delete_authorized_user(dict_users[sel])
                     st.success("Funcionário removido do sistema!")
                     st.rerun()
-            else:
-                st.info("Nenhum funcionário ativo.")
-                
         elif tipo_excl == "Alunos":
             alunos = fetch_all("SELECT id, name, code FROM students")
             if alunos:
@@ -934,8 +944,76 @@ def render_admin_dashboard() -> None:
                     delete_student_by_id(dict_alunos[sel])
                     st.error("Aluno apagado do sistema!")
                     st.rerun()
-            else:
-                st.info("Nenhum aluno cadastrado.")
+
+    elif aba_gerencia == "📊 Relatório Geral de Chamadas":
+        # ADICIONADO: Chama a nossa nova função de consultas e métricas
+        render_attendance_report()
+
+def render_attendance_report() -> None:
+    st.subheader("📊 Relatório Consolidado de Frequência Mensal")
+    st.write("Selecione os filtros abaixo para apurar o histórico de presenças e faltas da turma.")
+    
+    rooms = classroom_rows()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        selected_room = st.selectbox("Selecione a Turma:", [r["name"] for r in rooms], key="report_room")
+        classroom_id = next(r["id"] for r in rooms if r["name"] == selected_room)
+    with col2:
+        # Mapeamento do mês escolhido para o formato numérico correspondente (01 a 12)
+        mes_nome = st.selectbox("Selecione o Mês:", list(MESES_DO_ANO), key="report_month")
+        mes_index = f"{list(MESES_DO_ANO).index(mes_nome) + 1:02d}"
+    with col3:
+        # Ano letivo padrão
+        ano_selecionado = st.selectbox("Selecione o Ano:", ["2026", "2025", "2027"], key="report_year")
+
+    # Filtro de data no formato do banco (AAAA-MM)
+    data_filtro = f"{ano_selecionado}-{mes_index}"
+    
+    # Busca os alunos matriculados nessa sala específica
+    alunos = fetch_all("SELECT id, code, name FROM students WHERE classroom_id = ? ORDER BY name", (classroom_id,))
+    
+    if not list(alunos):
+        st.info("Nenhum aluno matriculado nesta sala de aula.")
+        return
+        
+    st.write(f"📅 **Apurando dados de:** {mes_nome} de {ano_selecionado} — **Turma:** {selected_room}")
+    
+    dados_relatorio = []
+    
+    for aluno in alunos:
+        # Busca todas as chamadas registradas para este aluno no mês correspondente
+        chamadas_mes = fetch_all(
+            "SELECT status FROM attendance WHERE student_id = ? AND attendance_date LIKE ?",
+            (aluno["id"], f"{data_filtro}-%")
+        )
+        
+        # Totalizadores padrões baseados na tupla STATUS_CHAMADA
+        total_presencas = sum(1 for c in chamadas_mes if c["status"] == "Presente")
+        total_faltas = sum(1 for c in chamadas_mes if c["status"] == "Falta")
+        total_justificadas = sum(1 for c in chamadas_mes if c["status"] == "Falta justificada")
+        total_dias = len(list(chamadas_mes))
+        
+        # Cálculo da porcentagem de aproveitamento (Frequência %)
+        taxa_frequencia = f"{(total_presencas / total_dias * 100):.1f}%" if total_dias > 0 else "0.0%"
+        
+        dados_relatorio.append({
+            "Código / Matrícula": aluno["code"],
+            "Nome do Aluno": aluno["name"],
+            "Presenças": total_presencas,
+            "Faltas": total_faltas,
+            "Faltas Justificadas": total_justificadas,
+            "Dias Letivos Apurados": total_dias,
+            "Frequência Global": taxa_frequencia
+        })
+        
+    st.divider()
+    # Exibe os dados consolidados em uma tabela rica e otimizada usando st.dataframe
+    st.dataframe(
+        dados_relatorio,
+        use_container_width=True,
+        hide_index=True
+    )
 
 # =====================================================================
 # 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS (CORRIGIDO)
