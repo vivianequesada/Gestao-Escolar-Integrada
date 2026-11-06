@@ -28,6 +28,7 @@ MATRICULAS_PERMITIDAS: dict[str, dict[str, str]] = {
 }
 
 SALAS_CADASTRADAS = (
+    "Todas as turmas",
     "Berçário I",
     "Berçário II",
     "Maternal I",
