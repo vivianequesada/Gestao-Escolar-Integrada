@@ -832,18 +832,24 @@ def render_admin_dashboard() -> None:
             st.write("### Vincular Nova Matrícula Autorizada")
             t_mat = st.text_input("Matrícula (Código de Acesso)")
             t_nome = st.text_input("Nome Completo")
+            t_email = st.text_input("E-mail Institucional / Corporativo") # <-- ADICIONADO: Campo de E-mail
             t_cargo = st.selectbox("Cargo Escolar:", ["Professor", "Monitor", "Administrador"])
             t_type = st.selectbox("Segmento (Se Professor):", ["Regular", "AEE"])
             t_sala = st.selectbox("Sala Atribuída:", [r["name"] for r in rooms])
+            
             if st.form_submit_button("➕ Salvar Funcionário"):
-                sala_id = next(r["id"] for r in rooms if r["name"] == t_sala)
-                with connection_scope() as conn:
-                    conn.execute(
-                        "INSERT OR IGNORE INTO authorized_users (registry, role, full_name, email, teacher_type, classroom_id, active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
-                        (t_mat.strip().lower(), t_cargo, t_nome.strip(), "", t_type, sala_id, datetime.now().isoformat(timespec="minutes"))
-                    )
-                st.success("Funcionário integrado com sucesso!")
-                st.rerun()
+                if not t_mat.strip() or not t_nome.strip():
+                    st.error("Por favor, preencha a Matrícula e o Nome Completo.")
+                else:
+                    sala_id = next(r["id"] for r in rooms if r["name"] == t_sala)
+                    with connection_scope() as conn:
+                        conn.execute(
+                            # Atualizado: Agora injeta a variável t_email no lugar correto do banco
+                            "INSERT OR IGNORE INTO authorized_users (registry, role, full_name, email, teacher_type, classroom_id, active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+                            (t_mat.strip().lower(), t_cargo, t_nome.strip(), t_email.strip().lower(), t_type, sala_id, datetime.now().isoformat(timespec="minutes"))
+                        )
+                    st.success("Funcionário integrado com sucesso!")
+                    st.rerun()
                 
     elif aba_gerencia == "👶 Matricular Novo Aluno no Carômetro":
         with st.form("form_adm_aluno"):
@@ -889,6 +895,7 @@ def render_admin_dashboard() -> None:
                     st.rerun()
             else:
                 st.info("Nenhum aluno cadastrado.")
+
 # =====================================================================
 # 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS (CORRIGIDO)
 # =====================================================================
