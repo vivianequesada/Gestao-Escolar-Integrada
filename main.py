@@ -408,6 +408,8 @@ def save_announcement(title: str, category: str, audience: str, body: str) -> No
 # 6. INTERFACES VISUAIS DO APLICATIVO (FUNÇÕES DE RENDERIZAÇÃO)
 # =====================================================================
 def render_login() -> None:
+    if os.path.exists("logo_escola.png"):
+        st.image("logo_escola.png", width=150)
     st.title(APP_TITLE)
     st.subheader("Acesso ao sistema")
     st.caption("Informe sua matrícula e os dados solicitados para entrar.")
