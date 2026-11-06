@@ -25,9 +25,6 @@ if not os.path.exists(UPLOAD_DIR):
 
 MATRICULAS_PERMITIDAS: dict[str, dict[str, str]] = {
     "adm123": {"role": "Administrador", "name": "Administrador", "email": "direcao@escola.com", "teacher_type": "Regular"},
-    "12345": {"role": "Professor", "name": "Regina Mello", "email": "regina@escola.com", "teacher_type": "Regular"},
-    "45678": {"role": "Professor", "name": "Paula Souza (AEE)", "email": "paula.aee@escola.com", "teacher_type": "AEE"},
-    "00000": {"role": "Monitor", "name": "Inspeção de Pátio", "email": "", "teacher_type": "Regular"},
 }
 
 SALAS_CADASTRADAS = (
