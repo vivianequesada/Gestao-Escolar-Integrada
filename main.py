@@ -666,7 +666,6 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
     if aba_aee == "Anexar Arquivo PDF Externo / Laudo":
         all_students = fetch_all("SELECT id, name FROM students WHERE active = 1")
         
-        # Criando o formulário para travar o carregamento infinito do arquivo
         with st.form("form_upload_laudo_pdf", clear_on_submit=True):
             student_sel = st.selectbox("Selecione o Aluno para Vincular o PDF:", [r["name"] for r in all_students])
             arquivo_enviado = st.file_uploader("Escolha o arquivo PDF do Laudo/PEI:", type=["pdf"])
@@ -680,11 +679,12 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
             elif not nome_doc.strip():
                 st.error("Por favor, digite uma identificação para o documento.")
             else:
-                # Sanitiza o nome do arquivo para evitar quebras de caminhos
+                if not os.path.exists(UPLOAD_DIR):
+                    os.makedirs(UPLOAD_DIR)
+                    
                 nome_limpo = f"{student_sel.replace(' ', '')}_{nome_doc.replace(' ', '_')}.pdf"
                 caminho_salvamento = os.path.join(str(UPLOAD_DIR), nome_limpo)
                 
-                # Lê os bytes de forma segura pós-envio do formulário
                 bytes_data = arquivo_enviado.read()
                 with open(caminho_salvamento, "wb") as f:
                     f.write(bytes_data)
@@ -692,7 +692,12 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
                 student_id = next(r["id"] for r in all_students if r["name"] == student_sel)
                 student_row = fetch_one("SELECT arquivos_pdf FROM students WHERE id = ?", (student_id,))
                 lista_pdf = json.loads(student_row["arquivos_pdf"] if student_row["arquivos_pdf"] else "[]")
-                lista_pdf.append({"nome": nome_doc, "data": date.today().strftime("%d/%m/%Y"), "caminho": caminho_salvamento})
+                
+                lista_pdf.append({
+                    "nome": nome_doc, 
+                    "data": date.today().strftime("%d/%m/%Y"), 
+                    "caminho": caminho_salvamento
+                })
                 
                 with connection_scope() as conn:
                     conn.execute("UPDATE students SET arquivos_pdf = ? WHERE id = ?", (json.dumps(lista_pdf), student_id))
@@ -716,19 +721,27 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
             if pdfs:
                 st.write("---")
                 st.subheader("📁 Arquivos PDF Anexados no Prontuário Escolar")
-                for doc in pdfs:
+                for i, doc in enumerate(pdfs):
                     with st.container(border=True):
-                        c1, c2 = st.columns()
+                        # CORREÇÃO: Adicionado o número 2 para renderizar as duas colunas lado a lado
+                        c1, c2 = st.columns(2)
                         c1.write(f"📄 {doc['nome']} (Anexado em {doc['data']})")
-                        if os.path.exists(doc["caminho"]):
-                            with open(doc["caminho"], "rb") as f_pdf:
+                        
+                        try:
+                            if os.path.exists(doc["caminho"]):
+                                with open(doc["caminho"], "rb") as f_pdf:
+                                    conteudo_pdf = f_pdf.read()
                                 c2.download_button(
                                     "📥 Abrir PDF", 
-                                    data=f_pdf.read(), 
-                                    file_name=os.path.basename(doc["caminho"]), 
+                                    data=conteudo_pdf, 
+                                    file_name=f"{doc['nome']}.pdf", 
                                     mime="application/pdf", 
-                                    key=doc["caminho"]
+                                    key=f"dl_{doc['caminho']}_{i}"
                                 )
+                            else:
+                                c2.warning("Aguardando novo envio do arquivo físico")
+                        except Exception:
+                            c2.error("Erro ao processar arquivo")
 
 def render_space_reservations(teacher: dict[str, str]) -> None:
     st.subheader("🏢 Agendamento de Espaços Escolares")
