@@ -406,7 +406,10 @@ def save_announcement(title: str, category: str, audience: str, body: str) -> No
 # 5. GERADORES DE TEMPLATES VISUAIS EM HTML (IMPRESSÃO DA ATA)
 # =====================================================================
 def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> str:
-    payload = decode_plan_content(row["content"])
+    # Transforma o registro em um dicionário comum para aceitar consultas seguras (.get)
+    row_dict = dict(row)
+    
+    payload = decode_plan_content(row_dict.get("content", "{}"))
     subject_reports = payload.get("subject_reports", {})
     
     subject_sections = ""
@@ -419,8 +422,8 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
                 f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(str(text))}</p></div>"
             )
     else:
-        # Caso seja um texto legado ou formato antigo, joga o conteúdo direto para não quebrar
-        legacy_text = payload.get("legacy_text", str(row["content"]))
+        # Caso seja um formato antigo ou legado, joga o conteúdo direto para não quebrar
+        legacy_text = payload.get("legacy_text", str(row_dict.get("content", "")))
         subject_sections = (
             f"<div style='margin-bottom: 15px;'><b>📌 Conteúdo do Registro:</b>"
             f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(legacy_text)}</p></div>"
@@ -429,31 +432,27 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
     # Gera os campos para TODOS os professores e administradores ativos assinarem
     signatures = []
     for row_teacher in teachers:
-        if row_teacher["role"] in ["Professor", "Administrador"]:
+        teacher_dict = dict(row_teacher)
+        if teacher_dict.get("role") in ["Professor", "Administrador"]:
             signatures.append(
                 f"<div style='margin-bottom: 25px; display: inline-block; width: 45%; min-width: 280px; margin-right: 4%; vertical-align: top;'>"
                 f"<p style='margin: 0;'>____________________________________</p>"
-                f"<p style='margin: 3px 0 0 0; font-size: 11px; color: #333;'>✍️ <b>{html.escape(row_teacher['full_name'].upper())}</b> ({html.escape(row_teacher['role'])})</p>"
+                f"<p style='margin: 3px 0 0 0; font-size: 11px; color: #333;'>✍️ <b>{html.escape(str(teacher_dict.get('full_name', '')).upper())}</b> ({html.escape(str(teacher_dict.get('role', ''))).upper()})</p>"
                 f"</div>"
             )
     signatures_html = "".join(signatures)
     
-    # Validação estrita para evitar IndexError se a coluna vier vazia ou nula
-    try:
-        trimester_val = row["trimester"] if row["trimester"] else "Conselho de Classe"
-    except Exception:
-        trimester_val = "Conselho de Classe"
-        
-    try:
-        classroom_val = row["classroom"] if row["classroom"] else "Geral"
-    except Exception:
-        classroom_val = "Geral"
+    # Consultas 100% seguras que evitam IndexError
+    trimester_val = row_dict.get("trimester") if row_dict.get("trimester") else "Conselho de Classe"
+    classroom_val = row_dict.get("classroom") if row_dict.get("classroom") else "Geral"
+    teacher_name_val = row_dict.get("teacher_name") if row_dict.get("teacher_name") else "Não informado"
+    row_id_val = row_dict.get("id", 0)
     
     html_content = f"""
-    <div id="documento-ata-{row['id']}" style="border: 2px solid #333; padding: 30px; background-color: #fff; color: #111; font-family: 'Courier New', monospace; max-width: 800px; margin: auto;">
+    <div id="documento-ata-{row_id_val}" style="border: 2px solid #333; padding: 30px; background-color: #fff; color: #111; font-family: 'Courier New', monospace; max-width: 800px; margin: auto;">
         <h2 style="text-align: center; margin-bottom: 5px; font-size: 20px;">ATA DE CONSELHO DE CLASSE CONSOLIDADA</h2>
         <p style="text-align: center; font-size: 14px; margin-top: 0;"><b>{html.escape(str(trimester_val).upper())}</b> | TURMA: {html.escape(str(classroom_val)).upper()}</p>
-        <p style="font-size: 13px;"><b>Coordenador Responsável:</b> {html.escape(row['teacher_name'])}</p>
+        <p style="font-size: 13px;"><b>Coordenador Responsible:</b> {html.escape(str(teacher_name_val))}</p>
         <hr style="border-top: 1px solid #333; margin-bottom: 20px;">
         {subject_sections}
         <br><hr style="border-top: 1px solid #333;"><h4 style='margin-bottom: 15px;'>✍️ CAMPOS PARA ASSINATURA DA EQUIPE ESCOLAR:</h4>
@@ -463,6 +462,7 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
     </div>
     """
     return html_content
+
 
 # =====================================================================
 # 6. INTERFACES VISUAIS DO APLICATIVO (FUNÇÕES DE RENDERIZAÇÃO)
@@ -790,17 +790,40 @@ def render_space_reservations(teacher: dict[str, str]) -> None:
         if not justificativa.strip():
             st.error("Por favor, preencha a finalidade pedagógica da reserva.")
         else:
-            now_str = datetime.now().isoformat(timespec="minutes")
-            with connection_scope() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO reservations 
-                        (space, responsible, teacher_name, teacher_registry, teacher_email, group_name, reservation_date, start_time, end_time, purpose, created_at)
-                    VALUES (?, 'Professor', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (local_opcao, teacher["name"], teacher["registry"], teacher.get("email", ""), turma_alvo, str(data_reserva), horario_reserva, horario_reserva, justificativa, now_str)
-                )
-            st.success(f"🎟️ Sucesso! **{local_opcao}** reservada para o dia **{data_reserva.strftime('%d/%m/%Y')}** no período **{horario_reserva}**.")
+            # ADICIONADO: Validação para impedir agendamentos no mesmo local, dia e horário
+            conflito = fetch_one(
+                "SELECT id FROM reservations WHERE space = ? AND reservation_date = ? AND start_time = ?",
+                (local_opcao, str(data_reserva), horario_reserva)
+            )
+            if conflito:
+                st.error(f"❌ Erro! A **{local_opcao}** já está reservada no dia **{format_date(str(data_reserva))}** neste horário!")
+            else:
+                now_str = datetime.now().isoformat(timespec="minutes")
+                with connection_scope() as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO reservations 
+                            (space, responsible, teacher_name, teacher_registry, teacher_email, group_name, reservation_date, start_time, end_time, purpose, created_at)
+                        VALUES (?, 'Professor', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (local_opcao, teacher["name"], teacher["registry"], teacher.get("email", ""), turma_alvo, str(data_reserva), horario_reserva, horario_reserva, justificativa, now_str)
+                    )
+                st.success(f"🎟️ Sucesso! **{local_opcao}** reservada no período **{horario_reserva}**.")
+                st.rerun()
+
+    # --- HISTÓRICO COMPLETO VISÍVEL PARA TODOS ---
+    st.divider()
+    st.subheader("📅 Quadro Geral de Ambientes Ocupados")
+    todas_reservas = fetch_all("SELECT space, teacher_name, group_name, reservation_date, start_time FROM reservations ORDER BY reservation_date DESC, start_time ASC")
+    
+    if todas_reservas:
+        st.dataframe(
+            [{"Local": r["space"], "Responsável": r["teacher_name"], "Turma Alvo": r["group_name"], "Data": format_date(r["reservation_date"]), "Horário": r["start_time"]} for r in todas_reservas],
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("Nenhum ambiente reservado no momento. Todos os horários estão livres!")
 
 def render_occurrences(teacher: dict[str, str]) -> None:
     st.subheader("🚨 Registro de Ocorrências da Rotina")
@@ -832,6 +855,51 @@ def render_occurrences(teacher: dict[str, str]) -> None:
             save_occurrence(student_id, tipo_sel, gravidade_sel, detalhes, data_ocorrido, teacher)
             st.success("Ocorrência registrada com sucesso!")
             st.rerun()
+
+    # --- HISTÓRICO FILTRADO POR PRIVILÉGIO DE CARGO ---
+    st.divider()
+    st.subheader("📋 Histórico de Ocorrências Acessíveis")
+    
+    # Se for Administrador (Direção/Coordenação), puxa tudo do banco
+    if teacher["role"] == "Administrador":
+        historico = fetch_all(
+            """
+            SELECT occurrences.*, students.name AS student_name, students.code AS student_code 
+            FROM occurrences 
+            JOIN students ON students.id = occurrences.student_id 
+            ORDER BY occurrences.occurrence_date DESC, occurrences.id DESC
+            """
+        )
+    else:
+        # Se for Professor, só busca o que a própria matrícula dele inseriu
+        historico = fetch_all(
+            """
+            SELECT occurrences.*, students.name AS student_name, students.code AS student_code 
+            FROM occurrences 
+            JOIN students ON students.id = occurrences.student_id 
+            WHERE occurrences.teacher_registry = ?
+            ORDER BY occurrences.occurrence_date DESC, occurrences.id DESC
+            """,
+            (teacher["registry"],)
+        )
+        
+    if historico:
+        for oc in historico:
+            cor = "🔴 Alta" if oc["severity"] == "Alta" else ("🟡 Média" if oc["severity"] == "Média" else "🟢 Leve")
+            with st.container(border=True):
+                st.markdown(f"### Aluno: {oc['student_name']} `({oc['student_code']})`")
+                st.caption(f"📅 **Data:** {format_date(oc['occurrence_date'])} · 📌 **Tipo:** {oc['occurrence_type']} · ⚖️ **Gravidade:** {cor}")
+                st.write(f"📝 **Relato:** {oc['details']}")
+                st.caption(f"✍️ **Registrado por:** {oc['teacher_name']} (Reg: {oc['teacher_registry']})")
+                
+                # Apenas quem registrou ou a direção pode excluir o registro
+                if teacher["role"] == "Administrador" or oc["teacher_registry"] == teacher["registry"]:
+                    if st.button("Excluir registro", key=f"del_oc_{oc['id']}"):
+                        delete_record("occurrences", oc["id"])
+                        st.rerun()
+    else:
+        st.info("Nenhuma ocorrência visível ou cadastrada para o seu perfil no momento.")
+
 def render_admin_dashboard() -> None:
     st.header("⚙️ Painel Administrativo de Controle Geral")
     aba_gerencia = st.radio("Escolha a Ação Administrativa:", ["👥 Cadastrar/Editar Funcionários", "👶 Matricular Novo Aluno no Carômetro", "🗑️ Excluir Alunos e Funcionários"], horizontal=True)
