@@ -567,7 +567,7 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
             )
     signatures_html = "".join(signatures)
     
-    trimester = row["trimester"] if row["trimester"] else "Conselho de Classe"
+        trimester = row["trimester"] if row["trimester"] else "Conselho de Classe"
     
     html_content = f"""
     <div id="documento-ata-{row['id']}" style="border: 2px solid #333; padding: 30px; background-color: #fff; color: #111; font-family: 'Courier New', monospace; max-width: 800px; margin: auto;">
@@ -584,7 +584,31 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
     """
     return html_content
 
-            elif tipo_registro == "Planejamento Pedagógico":
+def render_minutes_and_plans(teacher: dict[str, str]) -> None:
+    st.subheader("📝 Gestão de Atas por Matéria e Planejamentos")
+    rooms = classrooms_for_teacher(teacher)
+    room_names = [row["name"] for row in rooms]
+    selected_room = st.selectbox("Selecione a Sala:", room_names, key="plan_room")
+    classroom_id = next(row["id"] for row in rooms if row["name"] == selected_room)
+    
+    tipo_registro = st.radio("Selecione o Tipo de Operação:", ["Atas de Conselho", "Planejamento Pedagógico"], horizontal=True)
+    
+    if tipo_registro == "Atas de Conselho":
+        with st.form("form_ata_materias", clear_on_submit=True):
+            trimestre = st.selectbox("Trimestre Letivo:", TRIMESTRES)
+            st.write("### Deliberações Separadas por Matéria:")
+            
+            reports = {}
+            for area in BNCC_EXPERIENCES:
+                reports[area] = st.text_area(f"📌 Parecer Coletivo: {area}")
+                
+            if st.form_submit_button("📝 Protocolar e Consolidar Ata"):
+                content_json = json.dumps({"subject_reports": reports})
+                save_plan_or_minutes("Ata", date.today(), classroom_id, "Geral", f"Conselho de Classe {trimestre}", content_json, teacher, trimester=trimestre)
+                st.success("Ata protocolada!")
+                st.rerun()
+                
+    elif tipo_registro == "Planejamento Pedagógico":
         with st.form("form_planejamento_pedagogico", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
@@ -592,7 +616,6 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
                 quin_plan = st.selectbox("Quinzena:", QUINZENAS)
             with col2:
                 mes_plan = st.selectbox("Mês de Referência:", MESES_DO_ANO)
-                # Puxa dinamicamente as novas matérias que você definiu na tupla BNCC_EXPERIENCES
                 bncc_plan = st.selectbox("Campo de Experiência:", BNCC_EXPERIENCES)
                 
             titulo_plan = st.text_input("Título do Planejamento:")
@@ -605,7 +628,7 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
                     save_plan_or_minutes("Planejamento", date.today(), classroom_id, bncc_plan, titulo_plan, conteudo_plan, teacher, month_name=mes_plan, quinzena=quin_plan, trimester=tri_plan)
                     st.success("Planejamento pedagógico registrado!")
                     st.rerun()
-            
+
     st.divider()
     st.subheader("🖨️ Histórico de Documentos Oficiais Cadastrados")
     documentos = fetch_all("SELECT * FROM plans_minutes WHERE classroom_id = ? ORDER BY id DESC", (classroom_id,))
