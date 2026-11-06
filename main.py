@@ -408,40 +408,51 @@ def save_announcement(title: str, category: str, audience: str, body: str) -> No
 def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> str:
     payload = decode_plan_content(row["content"])
     subject_reports = payload.get("subject_reports", {})
-    if not isinstance(subject_reports, dict):
-        subject_reports = {}
-        
-    # Identifica dinamicamente quais matérias estão salvas neste documento específico
-    # Se for uma ata antiga, usa as chaves antigas. Se for nova, usa as novas.
-    materias_para_renderizar = list(subject_reports.keys()) if subject_reports else list(BNCC_EXPERIENCES)
     
-    # Se por acaso o documento estiver vazio, garante que use a lista atual
-    if not materias_para_renderizar:
-        materias_para_renderizar = list(BNCC_EXPERIENCES)
-        
-    subject_sections = "".join(
-        f"<div style='margin-bottom: 15px;'><b>📌 Componente: {html.escape(area)}</b>"
-        f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(str(subject_reports.get(area, 'Sem apontamentos.'))).replace(chr(10), '<br>')}</p></div>"
-        for area in materias_para_renderizar
-    )
+    subject_sections = ""
     
-    # Espaço de assinatura para TODOS os professores/adms cadastrados ativos no sistema
+    # Se houver um dicionário de matérias salvo, renderiza cada uma delas dinamicamente
+    if isinstance(subject_reports, dict) and subject_reports:
+        for area, text in subject_reports.items():
+            subject_sections += (
+                f"<div style='margin-bottom: 15px;'><b>📌 Componente: {html.escape(str(area))}</b>"
+                f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(str(text))}</p></div>"
+            )
+    else:
+        # Caso seja um texto legado ou formato antigo, joga o conteúdo direto para não quebrar
+        legacy_text = payload.get("legacy_text", str(row["content"]))
+        subject_sections = (
+            f"<div style='margin-bottom: 15px;'><b>📌 Conteúdo do Registro:</b>"
+            f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(legacy_text)}</p></div>"
+        )
+    
+    # Gera os campos para TODOS os professores e administradores ativos assinarem
     signatures = []
     for row_teacher in teachers:
         if row_teacher["role"] in ["Professor", "Administrador"]:
             signatures.append(
                 f"<div style='margin-bottom: 25px; display: inline-block; width: 45%; min-width: 280px; margin-right: 4%; vertical-align: top;'>"
                 f"<p style='margin: 0;'>____________________________________</p>"
-                f"<p style='margin: 3px 0 0 0; font-size: 12px;'>✍️ <b>{html.escape(row_teacher['full_name'].upper())}</b> ({html.escape(row_teacher['role'])})</p>"
+                f"<p style='margin: 3px 0 0 0; font-size: 11px; color: #333;'>✍️ <b>{html.escape(row_teacher['full_name'].upper())}</b> ({html.escape(row_teacher['role'])})</p>"
                 f"</div>"
             )
     signatures_html = "".join(signatures)
     
-    trimester = row["trimester"] or payload.get("trimestre", "")
+    # Validação estrita para evitar IndexError se a coluna vier vazia ou nula
+    try:
+        trimester_val = row["trimester"] if row["trimester"] else "Conselho de Classe"
+    except Exception:
+        trimester_val = "Conselho de Classe"
+        
+    try:
+        classroom_val = row["classroom"] if row["classroom"] else "Geral"
+    except Exception:
+        classroom_val = "Geral"
+    
     html_content = f"""
     <div id="documento-ata-{row['id']}" style="border: 2px solid #333; padding: 30px; background-color: #fff; color: #111; font-family: 'Courier New', monospace; max-width: 800px; margin: auto;">
-        <h2 style="text-align: center; margin-bottom: 5px;">ATA DE CONSELHO DE CLASSE CONSOLIDADA</h2>
-        <p style="text-align: center; font-size: 14px; margin-top: 0;"><b>{html.escape(trimester.upper())}</b> | TURMA: {html.escape(row['classroom'] if row['classroom'] else 'Geral').upper()}</p>
+        <h2 style="text-align: center; margin-bottom: 5px; font-size: 20px;">ATA DE CONSELHO DE CLASSE CONSOLIDADA</h2>
+        <p style="text-align: center; font-size: 14px; margin-top: 0;"><b>{html.escape(str(trimester_val).upper())}</b> | TURMA: {html.escape(str(classroom_val)).upper()}</p>
         <p style="font-size: 13px;"><b>Coordenador Responsável:</b> {html.escape(row['teacher_name'])}</p>
         <hr style="border-top: 1px solid #333; margin-bottom: 20px;">
         {subject_sections}
@@ -452,7 +463,6 @@ def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> s
     </div>
     """
     return html_content
-
 
 # =====================================================================
 # 6. INTERFACES VISUAIS DO APLICATIVO (FUNÇÕES DE RENDERIZAÇÃO)
