@@ -487,45 +487,62 @@ def render_daily_attendance(teacher: dict[str, str]) -> None:
         st.success("Frequência enviada e consolidada no histórico escolar!")
         st.rerun()
 def build_minutes_print_html(row: sqlite3.Row, teachers: list[sqlite3.Row]) -> str:
-    payload = decode_plan_content(row["content"])
+    # Transforma o registro do banco em um dicionário seguro para evitar erros de chaves
+    try:
+        row_dict = dict(row)
+    except Exception:
+        row_dict = {}
+
+    content_raw = row_dict.get("content", "{}")
+    payload = decode_plan_content(content_raw)
     subject_reports = payload.get("subject_reports", {})
     
     subject_sections = ""
     
-    # Se houver um dicionário de matérias salvo, renderiza cada uma delas dinamicamente
+    # 1. RENDERIZAÇÃO DINÂMICA DAS MATÉRIAS (À PROVA DE INDEXERROR)
     if isinstance(subject_reports, dict) and subject_reports:
         for area, text in subject_reports.items():
-            subject_sections += (
-                f"<div style='margin-bottom: 15px;'><b>📌 Componente: {html.escape(area)}</b>"
-                f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(str(text))}</p></div>"
-            )
-    else:
-        # Caso seja um texto legado ou formato antigo, joga o conteúdo direto para não quebrar
-        legacy_text = payload.get("legacy_text", str(row["content"]))
+            if text and str(text).strip():
+                subject_sections += (
+                    f"<div style='margin-bottom: 15px;'><b>📌 Componente: {html.escape(str(area))}</b>"
+                    f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(str(text))}</p></div>"
+                )
+    
+    # Se a ata for antiga ou não tiver o dicionário de matérias separado, joga o texto bruto com segurança
+    if not subject_sections:
+        legacy_text = payload.get("legacy_text", str(content_raw))
         subject_sections = (
             f"<div style='margin-bottom: 15px;'><b>📌 Conteúdo do Registro:</b>"
             f"<p style='margin: 5px 0 15px 0; text-align: justify;'>{html.escape(legacy_text)}</p></div>"
         )
     
-    # Gera os campos para TODOS os professores e administradores ativos assinarem
+    # 2. ESPAÇO DE ASSINATURA PARA TODOS OS PROFESSORES E ADMINISTRADORES CADASTRADOS
     signatures = []
     for row_teacher in teachers:
-        if row_teacher["role"] in ["Professor", "Administrador"]:
-            signatures.append(
-                f"<div style='margin-bottom: 25px; display: inline-block; width: 45%; min-width: 280px; margin-right: 4%; vertical-align: top;'>"
-                f"<p style='margin: 0;'>____________________________________</p>"
-                f"<p style='margin: 3px 0 0 0; font-size: 11px; color: #333;'>✍️ <b>{html.escape(row_teacher['full_name'].upper())}</b> ({html.escape(row_teacher['role'])})</p>"
-                f"</div>"
-            )
+        try:
+            t_dict = dict(row_teacher)
+            if t_dict.get("role") in ["Professor", "Administrador"]:
+                signatures.append(
+                    f"<div style='margin-bottom: 25px; display: inline-block; width: 45%; min-width: 280px; margin-right: 4%; vertical-align: top;'>"
+                    f"<p style='margin: 0;'>____________________________________</p>"
+                    f"<p style='margin: 3px 0 0 0; font-size: 11px; color: #333;'>✍️ <b>{html.escape(str(t_dict.get('full_name', '')).upper())}</b> ({html.escape(str(t_dict.get('role', ''))).upper()})</p>"
+                    f"</div>"
+                )
+        except Exception:
+            continue
     signatures_html = "".join(signatures)
     
-    trimester = row["trimester"] if row["trimester"] else "Conselho de Classe"
+    # 3. VALIDAÇÃO DAS COLUNAS DA REQUISIÇÃO (TRATAMENTO DE DADOS NULOS)
+    trimester_val = row_dict.get("trimester") if row_dict.get("trimester") else "Conselho de Classe"
+    classroom_val = row_dict.get("classroom") if row_dict.get("classroom") else "Geral"
+    teacher_name_val = row_dict.get("teacher_name") if row_dict.get("teacher_name") else "Não informado"
+    row_id_val = row_dict.get("id", 0)
     
     html_content = f"""
-    <div id="documento-ata-{row['id']}" style="border: 2px solid #333; padding: 30px; background-color: #fff; color: #111; font-family: 'Courier New', monospace; max-width: 800px; margin: auto;">
+    <div id="documento-ata-{row_id_val}" style="border: 2px solid #333; padding: 30px; background-color: #fff; color: #111; font-family: 'Courier New', monospace; max-width: 800px; margin: auto;">
         <h2 style="text-align: center; margin-bottom: 5px; font-size: 20px;">ATA DE CONSELHO DE CLASSE CONSOLIDADA</h2>
-        <p style="text-align: center; font-size: 14px; margin-top: 0;"><b>{html.escape(trimester.upper())}</b> | TURMA: {html.escape(row['classroom'] if row['classroom'] else 'Geral').upper()}</p>
-        <p style="font-size: 13px;"><b>Coordenador Responsável:</b> {html.escape(row['teacher_name'])}</p>
+        <p style="text-align: center; font-size: 14px; margin-top: 0;"><b>{html.escape(str(trimester_val).upper())}</b> | TURMA: {html.escape(str(classroom_val)).upper()}</p>
+        <p style="font-size: 13px;"><b>Coordenador Responsável:</b> {html.escape(str(teacher_name_val))}</p>
         <hr style="border-top: 1px solid #333; margin-bottom: 20px;">
         {subject_sections}
         <br><hr style="border-top: 1px solid #333;"><h4 style='margin-bottom: 15px;'>✍️ CAMPOS PARA ASSINATURA DA EQUIPE ESCOLAR:</h4>
@@ -654,10 +671,14 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
         
         if st.button("➕ Enviar e Salvar PDF no Prontuário"):
             if arquivo_enviado is not None and nome_doc.strip():
-                nome_limpo = f"{student_sel.replace(' ', '')}{nome_doc.replace(' ', '_')}.pdf"
+                # Sanitiza o nome para evitar problemas de caminhos com espaços
+                nome_limpo = f"{student_sel.replace(' ', '')}_{nome_doc.replace(' ', '_')}.pdf"
                 caminho_salvamento = os.path.join(str(UPLOAD_DIR), nome_limpo)
+                
+                # CORREÇÃO: Lê os bytes diretamente do arquivo enviado usando .read()
+                bytes_data = arquivo_enviado.read()
                 with open(caminho_salvamento, "wb") as f:
-                    f.write(arquivo_enviado.getbuffer())
+                    f.write(bytes_data)
                     
                 student_id = next(r["id"] for r in all_students if r["name"] == student_sel)
                 student_row = fetch_one("SELECT arquivos_pdf FROM students WHERE id = ?", (student_id,))
@@ -666,7 +687,7 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
                 
                 with connection_scope() as conn:
                     conn.execute("UPDATE students SET arquivos_pdf = ? WHERE id = ?", (json.dumps(lista_pdf), student_id))
-                st.success("Arquivo PDF anexado com sucesso!")
+                st.success("🎯 Arquivo PDF anexado com sucesso!")
                 st.rerun()
 
     elif aba_aee == "Histórico de Prontuários e PDFs":
