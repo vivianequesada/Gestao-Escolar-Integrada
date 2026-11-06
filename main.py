@@ -889,9 +889,8 @@ def render_admin_dashboard() -> None:
                     st.rerun()
             else:
                 st.info("Nenhum aluno cadastrado.")
-
 # =====================================================================
-# 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS (LIMPO E EXCLUSIVO)
+# 8. ROTEAMENTO DE SESSÃO E PÁGINAS PRINCIPAIS (CORRIGIDO)
 # =====================================================================
 if "teacher_profile" not in st.session_state:
     render_login()
@@ -900,7 +899,7 @@ else:
     
     st.sidebar.markdown(f"### 👤 {prof['name']}")
     st.sidebar.caption(f"Cargo: {prof['role']} | Acesso: {prof['registry']}")
-    if st.sidebar.button("🚪 Sair do Sistema", key="btn_sair_definitivo"):
+    if st.sidebar.button("🚪 Sair do Sistema", key="btn_sair_sistema_definitivo"):
         del st.session_state["teacher_profile"]
         st.rerun()
         
@@ -926,12 +925,9 @@ else:
         "🚨 Ocorrências da Rotina"
     ]
 
-    # Processamento e roteamento dinâmico baseado em papéis
+    # Roteamento baseado em papéis com chaves (keys) totalmente exclusivas
     if prof["role"] == "Administrador":
-        menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + paginas_menu, key="nav_adm_final")
-    # Processamento e roteamento dinâmico baseado em papéis
-    if prof["role"] == "Administrador":
-        menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + paginas_menu, key="nav_adm_final")
+        menu_escolha = st.sidebar.radio("Navegar para:", [ADMIN_PAGE] + paginas_menu, key="menu_lateral_administrador")
         
         if menu_escolha == ADMIN_PAGE: 
             render_admin_dashboard()
@@ -950,6 +946,28 @@ else:
         elif menu_escolha == "🚨 Ocorrências da Rotina": 
             render_occurrences(prof)
         
+    elif prof["role"] == "Professor":
+        menu_escolha = st.sidebar.radio("Navegar para:", paginas_menu, key="menu_lateral_professor")
+        
+        if menu_escolha == "📢 Quadro de Avisos": 
+            render_announcements()
+        elif menu_escolha == "📋 Chamada Diária": 
+            render_daily_attendance(prof)
+        elif menu_escolha == "📝 Planejamentos & Atas de Conselho": 
+            render_minutes_and_plans(prof)
+        elif menu_escolha == "📅 Calendário de Avaliações": 
+            render_assessment_calendar(prof)
+        elif menu_escolha == "🧒 Carômetro e Histórico de Alunos": 
+            render_aee_and_pdf_uploads(prof)
+        elif menu_escolha == "🏢 Agendamento de Espaços": 
+            render_space_reservations(prof)
+        elif menu_escolha == "🚨 Ocorrências da Rotina": 
+            render_occurrences(prof)
+        
+    elif prof["role"] == "Monitor":
+        st.title(MONITOR_PAGE)
+        render_aee_and_pdf_uploads(prof)
+
     elif prof["role"] == "Professor":
         menu_escolha = st.sidebar.radio("Navegar para:", paginas_menu, key="nav_prof_final")
         
