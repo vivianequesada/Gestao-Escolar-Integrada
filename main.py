@@ -1034,6 +1034,10 @@ if "teacher_profile" not in st.session_state:
 else:
     prof = st.session_state["teacher_profile"]
     
+    # >>> ADICIONE ESTAS LINHAS AQUI PARA EXIBIR A LOGO <<<
+    import os
+    if os.path.exists("logo_escola.png"):
+        st.sidebar.image("logo_escola.png", use_container_width=True)
     st.sidebar.markdown(f"### 👤 {prof['name']}")
     st.sidebar.caption(f"Cargo: {prof['role']} | Acesso: {prof['registry']}")
     if st.sidebar.button("🚪 Sair do Sistema", key="btn_sair_sistema_definitivo"):
