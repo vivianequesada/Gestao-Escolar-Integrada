@@ -1132,3 +1132,54 @@ else:
     elif prof["role"] == "Monitor":
         st.title(MONITOR_PAGE)
         render_aee_and_pdf_uploads(prof)
+import os
+import streamlit as st
+
+# Configuração da pasta onde os documentos ficam salvos
+PASTA_DOCUMENTOS = "documentos_conselho"
+
+# Criar a pasta caso ela não exista (apenas para o teste funcionar)
+if not os.path.exists(PASTA_DOCUMENTOS):
+    os.makedirs(PASTA_DOCUMENTOS)
+    # Criando arquivos de exemplo
+    with open(os.path.join(PASTA_DOCUMENTOS, "Ata_01_2026.txt"), "w") as f:
+        f.write("Conteúdo da ata...")
+    with open(
+        os.path.join(PASTA_DOCUMENTOS, "Planejamento_Estrategico.txt"), "w"
+    ) as f:
+        f.write("Conteúdo do planejamento...")
+
+
+# Função para deletar o arquivo
+def excluir_documento(nome_arquivo):
+    caminho_completo = os.path.join(PASTA_DOCUMENTOS, nome_arquivo)
+    if os.path.exists(caminho_completo):
+        os.remove(caminho_completo)
+        st.success(f"'{nome_arquivo}' excluído com sucesso!")
+        # Força o Streamlit a recarregar a página e atualizar a lista
+        st.rerun()
+    else:
+        st.error("Arquivo não encontrado.")
+
+
+st.title("Gestão de Atas e Planejamentos")
+
+# Listar os arquivos disponíveis na pasta
+arquivos = os.listdir(PASTA_DOCUMENTOS)
+
+if not arquivos:
+    st.info("Nenhum documento encontrado.")
+else:
+    st.write("### Documentos Disponíveis:")
+
+    # Exibir cada arquivo com um botão de exclusão ao lado
+    for arquivo in arquivos:
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            st.text(f"📄 {arquivo}")
+
+        with col2:
+            # Um botão com chave (key) única para cada arquivo
+            if st.button("👁️‍🗨️ Excluir", key=f"del_{arquivo}"):
+                excluir_documento(arquivo)
