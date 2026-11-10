@@ -998,6 +998,67 @@ def render_space_reservations(teacher: dict[str, str]) -> None:
 
 
 
+def update_occurrence_by_id(occurrence_id: int, student_id: int, occurrence_type: str, severity: str, details: str, occurrence_date: str) -> None:
+    """Atualiza as informações de uma ocorrência específica no banco de dados."""
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE occurrences 
+            SET student_id = ?, occurrence_type = ?, severity = ?, details = ?, occurrence_date = ? 
+            WHERE id = ?
+            """,
+            (student_id, occurrence_type, severity, details.strip(), occurrence_date, occurrence_id)
+        )
+@st.dialog("✏️ Editar Ocorrência da Rotina")
+def modal_editar_ocorrencia(ocorr, lista_alunos):
+    with st.form("form_edit_ocorrencia_popup"):
+        # Mapeia as opções para carregar o aluno correto previamente selecionado
+        dict_alunos = {f"{r['name']} (Matrícula: {r['code']})": r["id"] for r in lista_alunos}
+        nomes_alunos = list(dict_alunos.keys())
+        
+        # Tenta achar qual o nome correto do aluno para marcar o índice inicial do selectbox
+        idx_aluno = 0
+        for i, nome_composto in enumerate(nomes_alunos):
+            if dict_alunos[nome_composto] == ocorr["student_id"]:
+                idx_aluno = i
+                break
+                
+        aluno_sel = st.selectbox("Aluno envolvido:", nomes_alunos, index=idx_aluno)
+        novo_student_id = dict_alunos[aluno_sel]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            try:
+                idx_tipo = OCCURRENCE_TYPES.index(ocorr["occurrence_type"])
+            except:
+                idx_tipo = 0
+            novo_tipo = st.selectbox("Tipo de Ocorrência:", OCCURRENCE_TYPES, index=idx_tipo)
+        with col2:
+            try:
+                idx_grav = OCCURRENCE_SEVERITIES.index(ocorr["severity"])
+            except:
+                idx_grav = 0
+            nova_gravidade = st.selectbox("Nível de Gravidade:", OCCURRENCE_SEVERITIES, index=idx_grav)
+            
+        import datetime
+        try:
+            dt_formatada = datetime.date.fromisoformat(ocorr["occurrence_date"])
+        except:
+            dt_formatada = datetime.date.today()
+            
+        nova_data = st.date_input("Data do Fato:", value=dt_formatada)
+        novos_detalhes = st.text_area("Descrição detalhada:", value=ocorr["details"])
+        
+        if st.form_submit_button("💾 Salvar Alterações", type="primary"):
+            if not novos_detalhes.strip():
+                st.error("Preencha a descrição da ocorrência.")
+            else:
+                update_occurrence_by_id(
+                    ocorr["id"], novo_student_id, novo_tipo, 
+                    nova_gravidade, novos_detalhes, str(nova_data)
+                )
+                st.toast("✅ Ocorrência atualizada com sucesso!")
+                st.rerun()
 def render_occurrences(teacher: dict[str, str]) -> None:
     st.subheader("🚨 Registro de Ocorrências da Rotina")
     all_students = fetch_all("SELECT id, name, code FROM students WHERE active = 1 ORDER BY name")
@@ -1033,7 +1094,6 @@ def render_occurrences(teacher: dict[str, str]) -> None:
     st.divider()
     st.subheader("📋 Histórico de Ocorrências Acessíveis")
     
-    # Se for Administrador (Direção/Coordenação), puxa tudo do banco
     if teacher["role"] == "Administrador":
         historico = fetch_all(
             """
@@ -1044,7 +1104,6 @@ def render_occurrences(teacher: dict[str, str]) -> None:
             """
         )
     else:
-        # Se for Professor, só busca o que a própria matrícula dele inseriu
         historico = fetch_all(
             """
             SELECT occurrences.*, students.name AS student_name, students.code AS student_code 
@@ -1065,13 +1124,20 @@ def render_occurrences(teacher: dict[str, str]) -> None:
                 st.write(f"📝 **Relato:** {oc['details']}")
                 st.caption(f"✍️ **Registrado por:** {oc['teacher_name']} (Reg: {oc['teacher_registry']})")
                 
-                # Apenas quem registrou ou a direção pode excluir o registro
+                # Apenas quem registrou ou a direção pode gerenciar o registro
                 if teacher["role"] == "Administrador" or oc["teacher_registry"] == teacher["registry"]:
-                    if st.button("Excluir registro", key=f"del_oc_{oc['id']}"):
-                        delete_record("occurrences", oc["id"])
-                        st.rerun()
+                    col_btn_edit, col_btn_del = st.columns(2)
+                    with col_btn_edit:
+                        if st.button("✏️ Editar Ocorrência", key=f"edit_oc_{oc['id']}"):
+                            modal_editar_ocorrencia(oc, all_students)
+                    with col_btn_del:
+                        if st.button("🗑️ Excluir Registro", key=f"del_oc_{oc['id']}", type="primary"):
+                            delete_record("occurrences", oc["id"])
+                            st.toast("⚠️ Registro removido!")
+                            st.rerun()
     else:
         st.info("Nenhuma ocorrência visível ou cadastrada para o seu perfil no momento.")
+
 
 def render_admin_dashboard() -> None:
     st.header("⚙️ Painel Administrativo de Controle Geral")
