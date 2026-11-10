@@ -603,26 +603,48 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
     documentos = fetch_all("SELECT * FROM plans_minutes WHERE classroom_id = ? ORDER BY id DESC", (classroom_id,))
     teachers = registered_teacher_rows()
     
+    # Função auxiliar interna para lidar com a exclusão e atualização imediata da tela
+    def acao_excluir_registro(id_registro):
+        delete_record("plans_minutes", id_registro)
+        st.toast("⚠️ Documento excluído com sucesso!")
+        st.rerun()
+    
     for row in documentos:
         with st.container(border=True):
             if row["record_type"] == "Ata":
                 st.markdown(f"##### 📄 Ata: {row['title']}")
                 html_content = build_minutes_print_html(row, teachers)
                 st.html(html_content)
-                st.button(
-                    "🖨️ Abrir Janela de Impressão (Salvar como PDF)", 
-                    key=f"print_{row['id']}", 
-                    on_click=lambda h=html_content: st.html(f"<script>var win = window.open('', '_blank'); win.document.write({json.dumps(h)}); win.document.close(); win.print();</script>")
-                )
+                
+                # Alinhando botões de ação da Ata lado a lado
+                col_btn1, col_btn2 = st.columns([3, 1])
+                with col_btn1:
+                    st.button(
+                        "🖨️ Abrir Janela de Impressão (Salvar como PDF)", 
+                        key=f"print_{row['id']}", 
+                        on_click=lambda h=html_content: st.html(f"<script>var win = window.open('', '_blank'); win.document.write({json.dumps(h)}); win.document.close(); win.print();</script>")
+                    )
+                with col_btn2:
+                    st.button(
+                        "🗑️ Excluir Ata", 
+                        key=f"del_ata_{row['id']}", 
+                        type="primary", # Deixa o botão vermelho/destacado dependendo do tema do Streamlit
+                        on_click=acao_excluir_registro,
+                        args=(row["id"],)
+                    )
             else:
                 st.markdown(f"##### 📅 Planejamento: {row['title']}")
                 st.caption(f"Mês: {row['month_name']} | {row['quinzena']} | Matéria: {row['subject']}")
                 st.write(row["content"])
-                if st.button("Excluir Documento", key=f"del_doc_rec_{row['id']}"):
-                    delete_record("plans_minutes", row["id"])
-                    st.rerun()
-
-
+                
+                # Botão de exclusão do Planejamento usando a estrutura segura de on_click
+                st.button(
+                    "🗑️ Excluir Planejamento", 
+                    key=f"del_plan_{row['id']}", 
+                    type="primary",
+                    on_click=acao_excluir_registro,
+                    args=(row["id"],)
+                )
 def render_assessment_calendar(teacher: dict[str, str]) -> None:
     st.subheader("📅 Calendário de Avaliações")
     rooms = classroom_rows()
@@ -1132,54 +1154,3 @@ else:
     elif prof["role"] == "Monitor":
         st.title(MONITOR_PAGE)
         render_aee_and_pdf_uploads(prof)
-import os
-import streamlit as st
-
-# Configuração da pasta onde os documentos ficam salvos
-PASTA_DOCUMENTOS = "documentos_conselho"
-
-# Criar a pasta caso ela não exista (apenas para o teste funcionar)
-if not os.path.exists(PASTA_DOCUMENTOS):
-    os.makedirs(PASTA_DOCUMENTOS)
-    # Criando arquivos de exemplo
-    with open(os.path.join(PASTA_DOCUMENTOS, "Ata_01_2026.txt"), "w") as f:
-        f.write("Conteúdo da ata...")
-    with open(
-        os.path.join(PASTA_DOCUMENTOS, "Planejamento_Estrategico.txt"), "w"
-    ) as f:
-        f.write("Conteúdo do planejamento...")
-
-
-# Função para deletar o arquivo
-def excluir_documento(nome_arquivo):
-    caminho_completo = os.path.join(PASTA_DOCUMENTOS, nome_arquivo)
-    if os.path.exists(caminho_completo):
-        os.remove(caminho_completo)
-        st.success(f"'{nome_arquivo}' excluído com sucesso!")
-        # Força o Streamlit a recarregar a página e atualizar a lista
-        st.rerun()
-    else:
-        st.error("Arquivo não encontrado.")
-
-
-st.title("Gestão de Atas e Planejamentos")
-
-# Listar os arquivos disponíveis na pasta
-arquivos = os.listdir(PASTA_DOCUMENTOS)
-
-if not arquivos:
-    st.info("Nenhum documento encontrado.")
-else:
-    st.write("### Documentos Disponíveis:")
-
-    # Exibir cada arquivo com um botão de exclusão ao lado
-    for arquivo in arquivos:
-        col1, col2 = st.columns([3, 1])
-
-        with col1:
-            st.text(f"📄 {arquivo}")
-
-        with col2:
-            # Um botão com chave (key) única para cada arquivo
-            if st.button("👁️‍🗨️ Excluir", key=f"del_{arquivo}"):
-                excluir_documento(arquivo)
