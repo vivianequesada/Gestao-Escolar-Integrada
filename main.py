@@ -646,6 +646,66 @@ def render_minutes_and_plans(teacher: dict[str, str]) -> None:
                     on_click=acao_excluir_registro,
                     args=(row["id"],)
                 )
+def delete_assessment_by_id(assessment_id: int) -> None:
+    """Exclui permanentemente uma avaliação do calendário."""
+    with connection_scope() as connection:
+        connection.execute("DELETE FROM assessments WHERE id = ?", (assessment_id,))
+
+def update_assessment_by_id(assessment_id: int, title: str, subject: str, assessment_type: str, assessment_date: str, notes: str, classroom_id: int) -> None:
+    """Atualiza todas as informações de uma avaliação específica."""
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE assessments 
+            SET title = ?, subject = ?, assessment_type = ?, assessment_date = ?, notes = ?, classroom_id = ? 
+            WHERE id = ?
+            """,
+            (title.strip(), subject.strip(), assessment_type, assessment_date, notes, classroom_id, assessment_id)
+        )
+@st.dialog("✏️ Editar Avaliação")
+def modal_editar_avaliacao(avaliacao, rooms):
+    with st.form("form_edit_avaliacao_popup"):
+        novo_titulo = st.text_input("Avaliação", value=avaliacao["title"])
+        col1, col2, col3 = st.columns(3)
+        
+        # Encontra o índice da sala correspondente para vir previamente selecionada
+        lista_salas = [row["name"] for row in rooms]
+        try:
+            index_sala = lista_salas.index(avaliacao["classroom"])
+        except:
+            index_sala = 0
+            
+        sala_nome = col1.selectbox("Sala", lista_salas, index=index_sala)
+        novo_subject = col2.text_input("Componente curricular", value=avaliacao["subject"])
+        
+        lista_tipos = ["Prova", "Trabalho", "Apresentação", "Recuperação", "Outro"]
+        try:
+            index_tipo = lista_tipos.index(avaliacao["assessment_type"])
+        except:
+            index_tipo = 0
+            
+        novo_tipo = col3.selectbox("Tipo", lista_tipos, index=index_tipo)
+        
+        import datetime
+        try:
+            dt_formatada = datetime.date.fromisoformat(avaliacao["assessment_date"])
+        except:
+            dt_formatada = datetime.date.today()
+            
+        nova_data = st.date_input("Data", value=dt_formatada)
+        novas_notes = st.text_area("Orientações para a turma", value=avaliacao["notes"], height=90)
+        
+        if st.form_submit_button("💾 Salvar Alterações", type="primary"):
+            if not novo_titulo.strip() or not novo_subject.strip():
+                st.error("Preencha o nome da avaliação e o componente curricular.")
+            else:
+                target_room_id = next(row["id"] for row in rooms if row["name"] == sala_nome)
+                update_assessment_by_id(
+                    avaliacao["id"], novo_titulo, novo_subject, novo_tipo, 
+                    str(nova_data), novas_notes, target_room_id
+                )
+                st.toast("✅ Avaliação atualizada com sucesso!")
+                st.rerun()
 def render_assessment_calendar(teacher: dict[str, str]) -> None:
     st.subheader("📅 Calendário de Avaliações")
     rooms = classroom_rows()
@@ -667,6 +727,7 @@ def render_assessment_calendar(teacher: dict[str, str]) -> None:
             save_assessment(title, classroom_id, subject, assessment_type, assessment_date, notes, teacher)
             st.success("Avaliação adicionada ao calendário.")
 
+    # Agora buscamos também as notas/orientações para alimentar os cards e o editor
     rows = fetch_all(
         """
         SELECT assessments.*, classrooms.name AS classroom 
@@ -676,12 +737,34 @@ def render_assessment_calendar(teacher: dict[str, str]) -> None:
         """
     )
     st.divider()
+    st.write("### 📝 Avaliações Cadastradas")
+    
     if rows:
-        st.dataframe(
-            [{"Data": format_date(r["assessment_date"]), "Sala": r["classroom"], "Avaliação": r["title"], "Componente": r["subject"], "Tipo": r["assessment_type"]} for r in rows], 
-            use_container_width=True, 
-            hide_index=True
-        )
+        for r in rows:
+            with st.container(border=True):
+                # Exibe as informações organizadas em colunas visuais
+                c1, c2, c3, c4 = st.columns([1.5, 1.5, 3, 2])
+                c1.markdown(f"📅 **{format_date(r['assessment_date'])}**")
+                c2.markdown(f"🏫 **Sala:** {r['classroom']}")
+                c3.markdown(f"📝 **{r['title']}** ({r['assessment_type']})")
+                c4.markdown(f"📚 **Componente:** {r['subject']}")
+                
+                if r["notes"]:
+                    st.caption(f"ℹ️ *Orientações:* {r['notes']}")
+                
+                # Botões de gerenciamento da avaliação específica
+                col_btn_edit, col_btn_del = st.columns(2)
+                with col_btn_edit:
+                    if st.button("✏️ Editar Avaliação", key=f"edit_assess_{r['id']}"):
+                        modal_editar_avaliacao(r, rooms)
+                with col_btn_del:
+                    if st.button("🗑️ Excluir do Calendário", key=f"del_assess_{r['id']}", type="primary"):
+                        delete_assessment_by_id(r["id"])
+                        st.toast("⚠️ Avaliação removida!")
+                        st.rerun()
+    else:
+        st.info("Nenhuma avaliação cadastrada no calendário.")
+
 def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
     st.subheader("🧩 Atendimento Educacional Especializado (AEE)")
     aba_aee = st.radio("Escolha a Operação:", ["Anexar Arquivo PDF Externo / Laudo", "Histórico de Prontuários e PDFs"], horizontal=True)
