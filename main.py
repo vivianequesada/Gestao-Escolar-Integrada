@@ -974,19 +974,23 @@ def render_admin_dashboard() -> None:
         elif tipo_excl == "Alunos":
             alunos = fetch_all("SELECT id, name, code FROM students")
             if alunos:
-                dict_alunos = {f"Matrícula: {al['code']} - {al['name']}": al['id'] for al in alunos}
-                sel = st.selectbox("Selecione para deletar:", list(dict_alunos.keys()))
-                if st.button("❌ Remover Aluno Permanentemente", type="primary"):
-                    delete_student_by_id(dict_alunos[sel])
-def update_student_by_id(student_id: int, new_name: str, new_code: str) -> None:
-    """Atualiza o nome e a matrícula de um aluno no banco de dados."""
-    with connection_scope() as connection:
-        connection.execute(
-            "UPDATE students SET name = ?, code = ? WHERE id = ?",
-            (new_name.strip(), new_code.strip(), student_id)
-        )
-                    st.error("Aluno apagado do sistema!")
-                    st.rerun()
+                dict_alunos = {f"Matrícula: {al['code']} - {al['name']}": al for al in alunos}
+                sel = st.selectbox("Selecione para gerenciar:", list(dict_alunos.keys()))
+                aluno_selecionado = dict_alunos[sel]
+                
+                col_edit, col_del = st.columns(2)
+                with col_edit:
+                    if st.button("✏️ Editar Dados do Aluno", key="btn_edit_aluno_main"):
+                        modal_editar_aluno(
+                            aluno_selecionado["id"], 
+                            aluno_selecionado["name"], 
+                            aluno_selecionado["code"]
+                        )
+                with col_del:
+                    if st.button("❌ Remover Aluno Permanentemente", type="primary"):
+                        delete_student_by_id(aluno_selecionado["id"])
+                        st.error("Aluno apagado do sistema!")
+                        st.rerun()
 
     elif aba_gerencia == "📊 Relatório Geral de Chamadas":
         # ADICIONADO: Chama a nossa nova função de consultas e métricas
