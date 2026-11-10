@@ -985,7 +985,6 @@ def update_student_by_id(student_id: int, new_name: str, new_code: str) -> None:
             "UPDATE students SET name = ?, code = ? WHERE id = ?",
             (new_name.strip(), new_code.strip(), student_id)
         )
-
                     st.error("Aluno apagado do sistema!")
                     st.rerun()
 
