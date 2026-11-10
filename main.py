@@ -69,6 +69,7 @@ OCCURRENCE_TYPES = (
     "Queda/Escoriação",
     "Febre/Sintomas de Saúde",
     "Indisposição Alimentar",
+    "Bater/Responder",
     "Outros",
 )
 OCCURRENCE_SEVERITIES = ("Leve", "Média", "Alta")
@@ -977,6 +978,14 @@ def render_admin_dashboard() -> None:
                 sel = st.selectbox("Selecione para deletar:", list(dict_alunos.keys()))
                 if st.button("❌ Remover Aluno Permanentemente", type="primary"):
                     delete_student_by_id(dict_alunos[sel])
+def update_student_by_id(student_id: int, new_name: str, new_code: str) -> None:
+    """Atualiza o nome e a matrícula de um aluno no banco de dados."""
+    with connection_scope() as connection:
+        connection.execute(
+            "UPDATE students SET name = ?, code = ? WHERE id = ?",
+            (new_name.strip(), new_code.strip(), student_id)
+        )
+
                     st.error("Aluno apagado do sistema!")
                     st.rerun()
 
@@ -1154,3 +1163,17 @@ else:
     elif prof["role"] == "Monitor":
         st.title(MONITOR_PAGE)
         render_aee_and_pdf_uploads(prof)
+@st.dialog("✏️ Editar Dados do Aluno")
+def modal_editar_aluno(id_aluno, nome_atual, matricula_atual):
+    st.write(f"Modificando o cadastro de: **{nome_atual}**")
+    with st.form("form_editar_aluno_db"):
+        novo_nome = st.text_input("Nome Completo:", value=nome_atual)
+        novo_codigo = st.text_input("Matrícula/Código:", value=matricula_atual)
+        
+        if st.form_submit_button("💾 Salvar Alterações", type="primary"):
+            if not novo_nome.strip() or not novo_codigo.strip():
+                st.error("Nenhum dos campos pode ficar em branco.")
+            else:
+                update_student_by_id(id_aluno, novo_nome, novo_codigo)
+                st.toast("✅ Cadastro atualizado com sucesso!")
+                st.rerun()
