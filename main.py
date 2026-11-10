@@ -849,9 +849,76 @@ def render_aee_and_pdf_uploads(teacher: dict[str, str]) -> None:
                         except Exception:
                             c2.error("Erro ao processar arquivo")
 
+def delete_reservation_by_id(reservation_id: int) -> None:
+    """Exclui permanentemente uma reserva de espaço."""
+    with connection_scope() as connection:
+        connection.execute("DELETE FROM reservations WHERE id = ?", (reservation_id,))
+
+def update_reservation_by_id(reservation_id: int, space: str, group_name: str, reservation_date: str, start_time: str, purpose: str) -> None:
+    """Atualiza as informações de uma reserva específica."""
+    with connection_scope() as connection:
+        connection.execute(
+            """
+            UPDATE reservations 
+            SET space = ?, group_name = ?, reservation_date = ?, start_time = ?, end_time = ?, purpose = ? 
+            WHERE id = ?
+            """,
+            (space, group_name, reservation_date, start_time, start_time, purpose.strip(), reservation_id)
+        )
+
+@st.dialog("✏️ Editar Reserva de Espaço")
+def modal_editar_reserva(reserva, lista_turmas):
+    with st.form("form_edit_reserva_popup"):
+        locais = ["Quadra", "Biblioteca", "Informática"]
+        idx_local = locais.index(reserva["space"]) if reserva["space"] in locais else 0
+        novo_local = st.selectbox("Selecione o Local desejado:", locais, index=idx_local)
+        
+        col1, col2 = st.columns(2)
+        import datetime
+        try:
+            dt_formatada = datetime.date.fromisoformat(reserva["reservation_date"])
+        except:
+            dt_formatada = datetime.date.today()
+            
+        with col1:
+            nova_data = st.date_input("Data do Agendamento:", value=dt_formatada)
+        with col2:
+            horarios = [
+                "Manhã: 07:00 às 07:50", "Manhã: 07:50 às 08:40", "Manhã: 08:40 às 09:30",
+                "Manhã: 09:30 às 10:20", "Manhã: 10:20 às 11:10", "Manhã: 11:10 às 12:00",
+                "Tarde: 12:20 às 13:10", "Tarde: 13:10 às 14:00", "Tarde: 14:00 às 14:50",
+                "Tarde: 14:50 às 15:40", "Tarde: 15:40 às 16:30", "Tarde: 16:30 às 17:20",
+                "Tarde: 17:20 às 18:10"
+            ]
+            idx_hora = horarios.index(reserva["start_time"]) if reserva["start_time"] in horarios else 0
+            novo_horario = st.selectbox("Horário / Período Exato:", horarios, index=idx_hora)
+            
+        idx_turma = lista_turmas.index(reserva["group_name"]) if reserva["group_name"] in lista_turmas else 0
+        nova_turma = st.selectbox("Selecione a Turma:", lista_turmas, index=idx_turma)
+        nova_justificativa = st.text_area("Objetivo / Finalidade Pedagógica:", value=reserva["purpose"])
+        
+        if st.form_submit_button("💾 Salvar Alterações", type="primary"):
+            if not nova_justificativa.strip():
+                st.error("Por favor, preencha a finalidade pedagógica.")
+            else:
+                # Validação de conflito ignorando a própria reserva atual
+                conflito = fetch_one(
+                    "SELECT id FROM reservations WHERE space = ? AND reservation_date = ? AND start_time = ? AND id != ?",
+                    (novo_local, str(nova_data), novo_horario, reserva["id"])
+                )
+                if conflito:
+                    st.error("❌ Conflito! Este horário já está reservado por outro professor.")
+                else:
+                    update_reservation_by_id(reserva["id"], novo_local, nova_turma, str(nova_data), novo_horario, nova_justificativa)
+                    st.toast("✅ Reserva atualizada!")
+                    st.rerun()
+
 def render_space_reservations(teacher: dict[str, str]) -> None:
     st.subheader("🏢 Agendamento de Espaços Escolares")
     st.write("Preencha os campos abaixo para reservar um ambiente.")
+
+    rooms = classroom_rows()
+    lista_turmas = [row["name"] for row in rooms]
 
     with st.form("formulario_agendamento", clear_on_submit=True):
         local_opcao = st.selectbox("Selecione o Local desejado:", ["Quadra", "Biblioteca", "Informática"])
@@ -872,8 +939,7 @@ def render_space_reservations(teacher: dict[str, str]) -> None:
                 ]
             )
             
-        rooms = classroom_rows()
-        turma_alvo = st.selectbox("Selecione a Turma que utilizará o espaço:", [row["name"] for row in rooms])
+        turma_alvo = st.selectbox("Selecione a Turma que utilizará o espaço:", lista_turmas)
         justificativa = st.text_area("Objetivo / Finalidade Pedagógica:")
         botao_agendar = st.form_submit_button("Confirmar Agendamento", type="primary")
 
@@ -881,7 +947,6 @@ def render_space_reservations(teacher: dict[str, str]) -> None:
         if not justificativa.strip():
             st.error("Por favor, preencha a finalidade pedagógica da reserva.")
         else:
-            # ADICIONADO: Validação para impedir agendamentos no mesmo local, dia e horário
             conflito = fetch_one(
                 "SELECT id FROM reservations WHERE space = ? AND reservation_date = ? AND start_time = ?",
                 (local_opcao, str(data_reserva), horario_reserva)
@@ -902,19 +967,36 @@ def render_space_reservations(teacher: dict[str, str]) -> None:
                 st.success(f"🎟️ Sucesso! **{local_opcao}** reservada no período **{horario_reserva}**.")
                 st.rerun()
 
-    # --- HISTÓRICO COMPLETO VISÍVEL PARA TODOS ---
     st.divider()
     st.subheader("📅 Quadro Geral de Ambientes Ocupados")
-    todas_reservas = fetch_all("SELECT space, teacher_name, group_name, reservation_date, start_time FROM reservations ORDER BY reservation_date DESC, start_time ASC")
+    # Puxando o ID e o registro do criador para controle
+    todas_reservas = fetch_all("SELECT id, space, teacher_name, teacher_registry, group_name, reservation_date, start_time, purpose FROM reservations ORDER BY reservation_date DESC, start_time ASC")
     
     if todas_reservas:
-        st.dataframe(
-            [{"Local": r["space"], "Responsável": r["teacher_name"], "Turma Alvo": r["group_name"], "Data": format_date(r["reservation_date"]), "Horário": r["start_time"]} for r in todas_reservas],
-            use_container_width=True,
-            hide_index=True
-        )
+        for r in todas_reservas:
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([1.5, 2, 1.5])
+                c1.markdown(f"🏢 **{r['space']}**")
+                c2.markdown(f"📅 **Data:** {format_date(r['reservation_date'])} | ⏰ {r['start_time']}")
+                c3.markdown(f"👥 **Turma:** {r['group_name']}")
+                
+                st.caption(f"👤 *Agendado por:* {r['teacher_name']} | *Finalidade:* {r['purpose']}")
+                
+                # Validação de segurança: apenas quem criou pode alterar ou apagar
+                if r["teacher_registry"] == teacher["registry"]:
+                    col_edit, col_del = st.columns(2)
+                    with col_edit:
+                        if st.button("✏️ Mudar Reserva", key=f"edit_res_{r['id']}"):
+                            modal_editar_reserva(r, lista_turmas)
+                    with col_del:
+                        if st.button("🗑️ Cancelar Reserva", key=f"del_res_{r['id']}", type="primary"):
+                            delete_reservation_by_id(r["id"])
+                            st.toast("⚠️ Reserva cancelada!")
+                            st.rerun()
     else:
         st.info("Nenhum ambiente reservado no momento. Todos os horários estão livres!")
+
+
 
 def render_occurrences(teacher: dict[str, str]) -> None:
     st.subheader("🚨 Registro de Ocorrências da Rotina")
