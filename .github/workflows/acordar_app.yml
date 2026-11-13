@@ -2,7 +2,7 @@ name: Manter Apps Streamlit Acordados
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 jobs:
@@ -14,20 +14,44 @@ jobs:
           pip install playwright
           playwright install chromium
 
-      - name: Abrir os sites
+      - name: Abrir os sites e acordar se estiverem dormindo
         run: |
           python -c "
           from playwright.sync_api import sync_playwright
-          urls = ['https://streamlit.app', 'https://streamlit.app']
+
+          urls = [
+              'https://streamlit.app',
+              'https://streamlit.app'
+          ]
+
           with sync_playwright() as p:
-              browser = p.chromium.launch()
-              page = browser.new_page()
+              browser = p.chromium.launch(headless=True)
+              context = browser.new_context(
+                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+              )
+              page = context.new_page()
+
               for url in urls:
-                  page.goto(url, timeout=60000)
-                  page.wait_for_timeout(10000)
-                  btn = page.locator('button:has-text(\"Yes, get this app back up\")')
-                  if btn.count() > 0:
-                      btn.click()
-                      page.wait_for_timeout(15000)
+                  print(f'Acessando: {url}')
+                  page.goto(url, wait_until='networkidle', timeout=60000)
+                  page.wait_for_timeout(8000)
+
+                  clicked = False
+                  # Procura o botão na página principal e em todos os iframes
+                  for frame in page.frames:
+                      btn = frame.locator('button:has-text(\"Yes, get this app back up\")')
+                      if btn.count() > 0:
+                          print(f'Botão encontrado! Acordando {url}...')
+                          btn.first.click(force=True)
+                          clicked = True
+                          break
+
+                  if clicked:
+                      # Aguarda 30 segundos para o servidor ligar o app completamente
+                      page.wait_for_timeout(30000)
+                      print(f'{url} acordado com sucesso!')
+                  else:
+                      print(f'{url} já estava acordado!')
+
               browser.close()
           "
