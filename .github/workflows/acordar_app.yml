@@ -1,0 +1,33 @@
+name: Manter Apps Streamlit Acordados
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  wake_up:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instalar Playwright
+        run: |
+          pip install playwright
+          playwright install chromium
+
+      - name: Abrir os sites
+        run: |
+          python -c "
+          from playwright.sync_api import sync_playwright
+          urls = ['https://streamlit.app', 'https://streamlit.app']
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page()
+              for url in urls:
+                  page.goto(url, timeout=60000)
+                  page.wait_for_timeout(10000)
+                  btn = page.locator('button:has-text(\"Yes, get this app back up\")')
+                  if btn.count() > 0:
+                      btn.click()
+                      page.wait_for_timeout(15000)
+              browser.close()
+          "
