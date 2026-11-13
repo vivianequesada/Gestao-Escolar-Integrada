@@ -20,8 +20,8 @@ jobs:
           from playwright.sync_api import sync_playwright
 
           urls = [
-              'https://streamlit.app',
-              'https://streamlit.app'
+              'https://ciprefeitoarylevy.streamlit.app',
+              'https://escolaconectar.streamlit.app'
           ]
 
           with sync_playwright() as p:
